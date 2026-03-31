@@ -19,6 +19,7 @@ type Stats struct {
 	lastEvent     time.Time
 }
 
+// factory
 func New() *Stats {
 	return &Stats{
 		users:       make(map[string]struct{}),
