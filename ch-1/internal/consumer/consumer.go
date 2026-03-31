@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+// Recorder is satisfied by *stats.Stats — keeps consumer free of a direct import cycle.
+type Recorder interface {
+	Record(event WikiEvent)
+}
+
 type WikiEventMeta struct {
 	URI       string `json:"uri"`
 	RequestID string `json:"request_id"`
@@ -44,7 +49,7 @@ type WikiEvent struct {
 
 const WikiURL = "https://stream.wikimedia.org/v2/stream/recentchange"
 
-func Start(ctx context.Context) {
+func Start(ctx context.Context, rec Recorder) {
 	// 1. Build the request with a context so it can be cancelled
 	req, err := http.NewRequestWithContext(
 		ctx,
@@ -95,7 +100,7 @@ func Start(ctx context.Context) {
 			continue
 		}
 
-		log.Printf("id=%d type=%s user=%s bot=%v title=%q wiki=%s server=%s", event.ID, event.Type, event.User, event.Bot, event.Title, event.Wiki, event.ServerURL)
+		rec.Record(event)
 	}
 
 	// Scanner.Err() returns nil on clean EOF, or the real error

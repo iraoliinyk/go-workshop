@@ -2,6 +2,7 @@ package main
 
 import (
 	"ch-1/internal/consumer"
+	"ch-1/internal/stats"
 	"context"
 
 	"encoding/json"
@@ -21,12 +22,20 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go consumer.Start(ctx)
+	st := stats.New()
+
+	log.Println(st)
+
+	go consumer.Start(ctx, st)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(st.Snapshot())
 	})
 
 	server := &http.Server{
