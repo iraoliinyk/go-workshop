@@ -1,19 +1,13 @@
 package stats
 
 import (
-	"ch-1/internal/consumer"
+	consumermodels "ch-1/internal/consumer/models"
+	statsmodels "ch-1/internal/stats/models"
 	"sync"
 	"time"
 )
 
-type StatsSnapshot struct {
-	TotalMessages int64            `json:"total_messages"`
-	DistinctUsers int64            `json:"distinct_users"`
-	BotEdits      int64            `json:"bot_edits"`
-	HumanEdits    int64            `json:"human_edits"`
-	ByServerURL   map[string]int64 `json:"by_server_url"`
-	LastEvent     time.Time        `json:"last_event"`
-}
+type StatsSnapshot = statsmodels.StatsSnapshot
 
 type Stats struct {
 	mu            sync.RWMutex
@@ -32,7 +26,7 @@ func New() *Stats {
 	}
 }
 
-func (s *Stats) Record(event consumer.WikiEvent) {
+func (s *Stats) Record(event consumermodels.WikiEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

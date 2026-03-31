@@ -15,10 +15,6 @@ import (
 )
 
 func main() {
-	// Easy run with blocking
-	// ctx := context.Background()
-	// consumer.Start(ctx)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -55,7 +51,7 @@ func main() {
 
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
-		server.Shutdown(shutdownCtx) // drain in-flight HTTP requests
+		server.Shutdown(shutdownCtx) // stop letting new requests in, finalize existing
 	}()
 
 	log.Println("listening on :7000")

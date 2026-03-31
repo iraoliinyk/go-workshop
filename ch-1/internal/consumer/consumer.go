@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"bufio"
+	"ch-1/internal/consumer/models"
 	"context"
 	"encoding/json"
 	"io"
@@ -12,39 +13,7 @@ import (
 
 // Recorder is satisfied by *stats.Stats — keeps consumer free of a direct import cycle.
 type Recorder interface {
-	Record(event WikiEvent)
-}
-
-type WikiEventMeta struct {
-	URI       string `json:"uri"`
-	RequestID string `json:"request_id"`
-	ID        string `json:"id"`
-	Domain    string `json:"domain"`
-	Stream    string `json:"stream"`
-	DT        string `json:"dt"`
-	Topic     string `json:"topic"`
-	Partition int    `json:"partition"`
-	Offset    int64  `json:"offset"`
-}
-
-type WikiEvent struct {
-	Schema        string        `json:"$schema"`
-	Meta          WikiEventMeta `json:"meta"`
-	ID            int64         `json:"id"`
-	Type          string        `json:"type"`
-	Namespace     int           `json:"namespace"`
-	Title         string        `json:"title"`
-	TitleURL      string        `json:"title_url"`
-	Comment       string        `json:"comment"`
-	Timestamp     int64         `json:"timestamp"`
-	User          string        `json:"user"`
-	Bot           bool          `json:"bot"`
-	NotifyURL     string        `json:"notify_url"`
-	ServerURL     string        `json:"server_url"`
-	ServerName    string        `json:"server_name"`
-	ServerScript  string        `json:"server_script_path"`
-	Wiki          string        `json:"wiki"`
-	ParsedComment string        `json:"parsedcomment"`
+	Record(event models.WikiEvent)
 }
 
 const WikiURL = "https://stream.wikimedia.org/v2/stream/recentchange"
@@ -94,7 +63,7 @@ func Start(ctx context.Context, rec Recorder) {
 		payload = strings.TrimSpace(payload)
 
 		// 7. Decode JSON into the struct
-		var event WikiEvent
+		var event models.WikiEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			log.Printf("failed to parse event: %v", err)
 			continue
