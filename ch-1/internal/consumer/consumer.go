@@ -51,24 +51,10 @@ func Start(ctx context.Context, rec Recorder) {
 	scanner := bufio.NewScanner(resp.Body)
 
 	for scanner.Scan() {
-		line := scanner.Text() // one raw line, newline stripped
-
-		// 5. Skip blank lines (SSE event separators)
-		if line == "" {
+		event, ok := parseEvent(scanner.Text())
+		if !ok {
 			continue
 		}
-
-		// 6. Strip the "data: " prefix to get raw JSON
-		payload := strings.TrimPrefix(line, "data:")
-		payload = strings.TrimSpace(payload)
-
-		// 7. Decode JSON into the struct
-		var event models.WikiEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			log.Printf("failed to parse event: %v", err)
-			continue
-		}
-
 		rec.Record(event)
 	}
 
@@ -76,4 +62,19 @@ func Start(ctx context.Context, rec Recorder) {
 	if err := scanner.Err(); err != nil {
 		log.Printf("stream error: %v", err)
 	}
+}
+
+// parseEvent parses a raw SSE line into a WikiEvent.
+// Returns false if the line should be skipped (blank or invalid JSON).
+func parseEvent(line string) (models.WikiEvent, bool) {
+	if line == "" {
+		return models.WikiEvent{}, false
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	var event models.WikiEvent
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		log.Printf("failed to parse event: %v", err)
+		return models.WikiEvent{}, false
+	}
+	return event, true
 }
