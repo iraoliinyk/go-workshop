@@ -1,11 +1,12 @@
 package main
 
 import (
+	"ch-1/internal/apperrors"
 	"ch-1/internal/consumer"
 	"ch-1/internal/stats"
 	"context"
-
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -20,9 +21,12 @@ func main() {
 
 	st := stats.New()
 
-	log.Println(st)
-
-	go consumer.Start(ctx, st)
+	// consumerErr receives the terminal error from the consumer goroutine
+	// so that process termination is decided here, not inside consumer.Start.
+	consumerErr := make(chan error, 1)
+	go func() {
+		consumerErr <- consumer.Start(ctx, st)
+	}()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
@@ -44,14 +48,37 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	go func() {
-		<-quit // block until signal received
-		log.Println("shutting down...")
-		cancel() // stop the consumer go-routine
+	// shutdown runs the graceful stop sequence and is called from both
+	// the OS signal path and the consumer-error path.
+	shutdown := func(reason string) {
+		log.Printf("shutting down: %s", reason)
+		cancel() // stop the consumer goroutine
 
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
-		server.Shutdown(shutdownCtx) // stop letting new requests in, finalize existing
+
+		// stop letting new requests in, finalize existing
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Printf("[%s] %v", (&apperrors.ShutdownError{Err: err}).Code(),
+				&apperrors.ShutdownError{Err: err})
+		}
+	}
+
+	go func() {
+		select {
+		case sig := <-quit:
+			shutdown(sig.String())
+		case err := <-consumerErr:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				var appErr apperrors.AppError
+				if errors.As(err, &appErr) {
+					log.Printf("[%s] consumer failed: %v", appErr.Code(), appErr)
+				} else {
+					log.Printf("consumer failed: %v", err)
+				}
+			}
+			shutdown("consumer exited")
+		}
 	}()
 
 	log.Println("listening on :7000")

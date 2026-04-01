@@ -2,30 +2,31 @@ package consumer
 
 import (
 	"bufio"
+	"ch-1/internal/apperrors"
 	"ch-1/internal/consumer/models"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 )
 
+// Recorder is satisfied by *stats.Stats — keeps consumer free of a direct import cycle.
 type Recorder interface {
 	Record(event models.WikiEvent)
 }
 
 const WikiURL = "https://stream.wikimedia.org/v2/stream/recentchange"
 
-func Start(ctx context.Context, rec Recorder) {
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		WikiURL,
-		nil,
-	)
+// Start connects to the Wikimedia SSE stream and records events until ctx is cancelled.
+// Returns a ConnectionError or StreamError on fatal failure so the caller
+// can handle process termination centrally instead of calling log.Fatal here.
+func Start(ctx context.Context, rec Recorder) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, WikiURL, nil)
 	if err != nil {
-		log.Fatal(err)
+		return &apperrors.ConnectionError{Err: fmt.Errorf("build request: %w", err)}
 	}
 
 	// Required by Wikimedia robot policy — generic Go UA is blocked
@@ -34,21 +35,26 @@ func Start(ctx context.Context, rec Recorder) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		return &apperrors.ConnectionError{Err: fmt.Errorf("do request: %w", err)}
 	}
 	defer resp.Body.Close()
 
 	// Guard: check status before reading stream
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		log.Fatalf("unexpected status %d: %s", resp.StatusCode, string(body))
+		return &apperrors.ConnectionError{
+			StatusCode: resp.StatusCode,
+			Err:        fmt.Errorf("%s", body),
+		}
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
 
 	for scanner.Scan() {
-		event, ok := parseEvent(scanner.Text())
-		if !ok {
+		event, err := parseEvent(scanner.Text())
+		if err != nil {
+			// ParseError: log and continue — stream is not broken
+			log.Printf("[%s] %v", err.Code(), err)
 			continue
 		}
 		rec.Record(event)
@@ -56,19 +62,22 @@ func Start(ctx context.Context, rec Recorder) {
 
 	// returns nil on clean EOF, or the real error
 	if err := scanner.Err(); err != nil {
-		log.Printf("stream error: %v", err)
+		return &apperrors.StreamError{Err: err}
 	}
+	return nil
 }
 
-func parseEvent(line string) (models.WikiEvent, bool) {
+// parseEvent parses a raw SSE line into a WikiEvent.
+// Returns *apperrors.ParseError if the line is blank or contains invalid JSON.
+func parseEvent(line string) (models.WikiEvent, *apperrors.ParseError) {
 	if line == "" {
-		return models.WikiEvent{}, false
+		return models.WikiEvent{}, &apperrors.ParseError{Line: line, Err: fmt.Errorf("blank line")}
 	}
 	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+
 	var event models.WikiEvent
 	if err := json.Unmarshal([]byte(payload), &event); err != nil {
-		log.Printf("failed to parse event: %v", err)
-		return models.WikiEvent{}, false
+		return models.WikiEvent{}, &apperrors.ParseError{Line: line, Err: err}
 	}
-	return event, true
+	return event, nil
 }
