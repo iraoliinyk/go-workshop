@@ -34,17 +34,6 @@ func TestParseEvent_ValidDataLine(t *testing.T) {
 	}
 }
 
-func TestParseEvent_BlankLine(t *testing.T) {
-	_, err := parseEvent("")
-	if err == nil {
-		t.Error("expected error for a blank line")
-	}
-	var parseErr *apperrors.ParseError
-	if !isParseError(err, &parseErr) {
-		t.Errorf("expected *apperrors.ParseError, got %T", err)
-	}
-}
-
 func TestParseEvent_InvalidJSON(t *testing.T) {
 	_, err := parseEvent("data: {not valid json}")
 	if err == nil {
@@ -69,19 +58,8 @@ func TestParseEvent_StripsDataPrefix(t *testing.T) {
 	}
 }
 
-func TestParseEvent_LineWithoutDataPrefix(t *testing.T) {
-	_, err := parseEvent("event: change")
-	if err == nil {
-		t.Error("expected error for non-data SSE line")
-	}
-	var parseErr *apperrors.ParseError
-	if !isParseError(err, &parseErr) {
-		t.Errorf("expected *apperrors.ParseError, got %T", err)
-	}
-}
-
 func TestParseEvent_ErrorCode(t *testing.T) {
-	_, err := parseEvent("")
+	_, err := parseEvent("data: {not valid json}")
 	if err == nil {
 		t.Fatal("expected error")
 	}

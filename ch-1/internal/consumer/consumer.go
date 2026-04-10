@@ -51,7 +51,15 @@ func Start(ctx context.Context, rec Recorder) error {
 	scanner := bufio.NewScanner(resp.Body)
 
 	for scanner.Scan() {
-		event, err := parseEvent(scanner.Text())
+		line := scanner.Text()
+
+		// Only process data lines — skip event:, id:, comments (:ok) and blank lines.
+		// Other SSE line types are valid protocol lines, not JSON payloads.
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+
+		event, err := parseEvent(line)
 		if err != nil {
 			// ParseError: log and continue — stream is not broken
 			log.Printf("[%s] %v", err.Code(), err)
@@ -67,12 +75,10 @@ func Start(ctx context.Context, rec Recorder) error {
 	return nil
 }
 
-// parseEvent parses a raw SSE line into a WikiEvent.
-// Returns *apperrors.ParseError if the line is blank or contains invalid JSON.
+// parseEvent parses a raw SSE data line into a WikiEvent.
+// The caller is responsible for passing only lines that start with "data:".
+// Returns *apperrors.ParseError if the JSON payload cannot be decoded.
 func parseEvent(line string) (models.WikiEvent, *apperrors.ParseError) {
-	if line == "" {
-		return models.WikiEvent{}, &apperrors.ParseError{Line: line, Err: fmt.Errorf("blank line")}
-	}
 	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 
 	var event models.WikiEvent
