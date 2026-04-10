@@ -59,15 +59,17 @@ func main() {
 
 		// stop letting new requests in, finalize existing
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Printf("[%s] %v", (&apperrors.ShutdownError{Err: err}).Code(),
-				&apperrors.ShutdownError{Err: err})
+			shutdownError := &apperrors.ShutdownError{Err: err}
+			log.Printf("[%s] %v", shutdownError.Code(), shutdownError)
 		}
 	}
 
+	done := make(chan struct{}) // empty signal channel
 	go func() {
+		defer close(done) // closing = broadcasting "I am done"
 		select {
 		case sig := <-quit:
-			shutdown(sig.String())
+			shutdown(sig.String()) // shutdown() runs to completion
 		case err := <-consumerErr:
 			if err != nil && !errors.Is(err, context.Canceled) {
 				var appErr apperrors.AppError
@@ -85,4 +87,5 @@ func main() {
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+	<-done // wait for shutdown to finish
 }
