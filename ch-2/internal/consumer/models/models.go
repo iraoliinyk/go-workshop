@@ -1,17 +1,11 @@
 package models
 
-type WikiEventMeta struct {
-	URI string `json:"uri"`
-	ID  string `json:"id"`
-}
-
+// WikiEvent holds only the fields the stats logic consumes. The Wikimedia
+// stream sends many more (meta, id, type, title, timestamp, …); unmarshalling
+// simply ignores any JSON key without a matching field, so unused fields are
+// omitted here rather than carried as dead weight.
 type WikiEvent struct {
-	Meta      WikiEventMeta `json:"meta"`
-	ID        int64         `json:"id"`
-	Type      string        `json:"type"`
-	Title     string        `json:"title"`
-	Timestamp int64         `json:"timestamp"`
-	User      string        `json:"user"`
-	Bot       bool          `json:"bot"`
-	ServerURL string        `json:"server_url"`
+	User      string `json:"user"`
+	Bot       bool   `json:"bot"`
+	ServerURL string `json:"server_url"`
 }

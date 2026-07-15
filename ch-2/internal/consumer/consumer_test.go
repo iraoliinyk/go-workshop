@@ -9,8 +9,6 @@ import (
 
 func TestParseEvent_ValidDataLine(t *testing.T) {
 	event := models.WikiEvent{
-		ID:        42,
-		Type:      "edit",
 		User:      "iryna",
 		Bot:       false,
 		ServerURL: "https://en.wikipedia.org",
