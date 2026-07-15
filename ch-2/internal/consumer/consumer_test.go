@@ -14,7 +14,6 @@ func TestParseEvent_ValidDataLine(t *testing.T) {
 		User:      "iryna",
 		Bot:       false,
 		ServerURL: "https://en.wikipedia.org",
-		Wiki:      "enwiki",
 	}
 	payload, _ := json.Marshal(event)
 

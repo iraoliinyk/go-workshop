@@ -39,7 +39,7 @@ func main() {
 	})
 
 	server := &http.Server{
-		Addr:         ":7000",
+		Addr:         ":7001",
 		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
@@ -83,7 +83,7 @@ func main() {
 		}
 	}()
 
-	log.Println("listening on :7000")
+	log.Println("listening on :7001")
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
