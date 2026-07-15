@@ -1,8 +1,8 @@
 package stats_test
 
 import (
-	consumermodels "ch-1/internal/consumer/models"
-	"ch-1/internal/stats"
+	consumermodels "ch-2/internal/consumer/models"
+	"ch-2/internal/stats"
 	"sync"
 	"testing"
 )

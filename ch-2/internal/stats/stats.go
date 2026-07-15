@@ -1,8 +1,8 @@
 package stats
 
 import (
-	consumermodels "ch-1/internal/consumer/models"
-	statsmodels "ch-1/internal/stats/models"
+	consumermodels "ch-2/internal/consumer/models"
+	statsmodels "ch-2/internal/stats/models"
 	"sync"
 	"time"
 )

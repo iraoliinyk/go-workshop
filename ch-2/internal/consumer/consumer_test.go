@@ -1,8 +1,8 @@
 package consumer
 
 import (
-	"ch-1/internal/apperrors"
-	"ch-1/internal/consumer/models"
+	"ch-2/internal/apperrors"
+	"ch-2/internal/consumer/models"
 	"encoding/json"
 	"testing"
 )
