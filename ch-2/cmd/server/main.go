@@ -4,9 +4,9 @@ import (
 	"ch-2/internal/apperrors"
 	"ch-2/internal/config"
 	"ch-2/internal/consumer"
+	"ch-2/internal/httpapi"
 	"ch-2/internal/stats"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -39,20 +39,12 @@ func main() {
 		}, st)
 	}()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
-	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(st.Snapshot())
-	})
+	api := httpapi.New(st)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	server := &http.Server{
 		Addr:         addr,
-		Handler:      mux,
+		Handler:      api.Router(),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
