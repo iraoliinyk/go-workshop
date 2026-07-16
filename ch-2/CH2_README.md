@@ -138,3 +138,45 @@ docker run --rm --name wiki-recent -d -p 7001:7001 wiki-recent-go
 ```bash
 docker compose -f docker-compose.yaml up --build
 ```
+
+---
+
+## Dockerfile: Alpine variant (for testing)
+
+The default `Dockerfile` uses `FROM scratch` for the smallest possible image
+(~9.5 MB). `scratch` has **no shell, no `wget`, and no CA certs**, which makes
+debugging and healthchecks harder. For testing — when you want to `docker exec`
+into the container or let the Compose `wget` healthcheck pass — swap the runtime
+stage for `alpine:3.20` (~18.7 MB):
+
+```dockerfile
+# syntax=docker/dockerfile:1
+
+# ---- build stage ----
+FROM golang:1.26.1 AS build
+WORKDIR /ch-2
+# Copy manifests first so `go mod download` is cached until deps change
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /out/wiki ./cmd/server
+
+# ---- runtime stage (Alpine — shell + wget for testing/debugging) ----
+FROM alpine:3.20
+# Alpine ships no cert bundle by default; the consumer calls
+# https://stream.wikimedia.org, so CA certs are required for TLS.
+RUN apk add --no-cache ca-certificates
+WORKDIR /
+COPY --from=build /out/wiki /wiki
+EXPOSE 7001
+ENTRYPOINT ["/wiki"]
+```
+
+Build, run, and shell in to verify:
+
+```bash
+docker build --tag wiki-recent-go:alpine .
+docker run --rm --name wiki-recent -d -p 7001:7001 wiki-recent-go:alpine
+docker exec -it wiki-recent sh          # possible with Alpine, not with scratch
+curl -s http://localhost:7001/stats | jq
+```
