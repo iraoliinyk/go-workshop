@@ -1,0 +1,10 @@
+services:
+  wiki-recent-go:
+    container_name: wiki-recent
+    image: wiki-recent-go:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "7001:7001"
+    restart: unless-stopped

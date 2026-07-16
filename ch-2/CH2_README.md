@@ -132,5 +132,5 @@ docker build --tag wiki-recent-go .
 ```
 
 ```bash
-docker run --rm --name wiki-recent -p 7001:7001 wiki-recent-go
+docker run --rm --name wiki-recent -d -p 7001:7001 wiki-recent-go
 ```
