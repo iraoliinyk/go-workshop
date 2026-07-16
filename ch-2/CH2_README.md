@@ -134,3 +134,7 @@ docker build --tag wiki-recent-go .
 ```bash
 docker run --rm --name wiki-recent -d -p 7001:7001 wiki-recent-go
 ```
+
+```bash
+docker compose -f docker-compose.yaml up --build
+```

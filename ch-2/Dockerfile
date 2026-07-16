@@ -13,9 +13,11 @@ COPY . .
 # RUN CGO_ENABLED=0 GOOS=linux go build -o /wiki-recent-go ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/wiki ./cmd/server
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM scratch
 WORKDIR /
+# CA certs are required: the consumer calls https://stream.wikimedia.org and
+# scratch has no cert bundle, so TLS verification would fail without this.
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /out/wiki /wiki
 EXPOSE 7001
-USER nonroot:nonroot
 ENTRYPOINT ["/wiki"]
