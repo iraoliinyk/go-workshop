@@ -1,10 +1,17 @@
 services:
-  wiki-recent-go:
-    container_name: wiki-recent
-    image: wiki-recent-go:latest
+  wiki:                             
     build:
       context: .
       dockerfile: Dockerfile
+    image: wiki-recent-go:latest
+    container_name: wiki-recent
     ports:
       - "7001:7001"
+    env_file:
+      - .env                          # load config instead of baking it in
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7001/status"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
