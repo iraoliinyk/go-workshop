@@ -7,8 +7,6 @@ services:
     container_name: wiki-recent
     ports:
       - "7001:7001"
-    env_file:
-      - .env                          # load config instead of baking it in
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:7001/status"]
