@@ -58,6 +58,9 @@ func Start(ctx context.Context, cfg Config, rec Recorder) error {
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue // skip blank separator lines
+		}
 		event, err := parseEvent(line)
 		if err != nil {
 			// ParseError: log and continue — stream is not broken

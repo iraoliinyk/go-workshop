@@ -41,6 +41,7 @@ func main() {
 
 	api := httpapi.New(st)
 
+	// no exponential backoff for now, just rely on docker-compose restart: unless-stopped
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	server := &http.Server{
 		Addr:         addr,
