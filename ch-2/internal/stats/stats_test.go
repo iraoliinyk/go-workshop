@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
 )
 
 // helper — builds a WikiEvent with sensible defaults, override via fields
@@ -22,12 +22,11 @@ func TestNew_InitialisesEmptyStats(t *testing.T) {
 	st := stats.New()
 	snap := st.Snapshot()
 
-	require.Equal(t, int64(0), snap.TotalMessages)
-	require.Equal(t, int64(0), snap.DistinctUsers)
-	require.Equal(t, int64(0), snap.BotEdits)
-	require.Equal(t, int64(0), snap.BotEdits)
-	require.Equal(t, int64(0), snap.HumanEdits)
-	require.Equal(t, 0, len(snap.ByServerURL))
+	assert.Equal(t, int64(0), snap.TotalMessages)
+	assert.Equal(t, int64(0), snap.DistinctUsers)
+	assert.Equal(t, int64(0), snap.BotEdits)
+	assert.Equal(t, int64(0), snap.HumanEdits)
+	assert.Empty(t, snap.ByServerURL)
 }
 
 func TestRecord_CountsTotalMessages(t *testing.T) {
@@ -39,7 +38,7 @@ func TestRecord_CountsTotalMessages(t *testing.T) {
 
 	got := st.Snapshot().TotalMessages
 
-	require.Equal(t, int64(3), got)
+	assert.Equal(t, int64(3), got)
 }
 
 func TestRecord_CountsDistinctUsers(t *testing.T) {
@@ -50,9 +49,7 @@ func TestRecord_CountsDistinctUsers(t *testing.T) {
 	st.Record(mockEvent("iryna", false, "https://en.wikipedia.org"))
 	st.Record(mockEvent("john", false, "https://en.wikipedia.org"))
 
-	if got := st.Snapshot().DistinctUsers; got != 2 {
-		t.Errorf("expected 2 distinct users, got %d", got)
-	}
+	assert.Equal(t, int64(2), st.Snapshot().DistinctUsers)
 }
 
 func TestRecord_IgnoresEmptyUser(t *testing.T) {
@@ -60,9 +57,7 @@ func TestRecord_IgnoresEmptyUser(t *testing.T) {
 
 	st.Record(mockEvent("", false, "https://en.wikipedia.org"))
 
-	if got := st.Snapshot().DistinctUsers; got != 0 {
-		t.Errorf("expected 0 distinct users for empty username, got %d", got)
-	}
+	assert.Equal(t, int64(0), st.Snapshot().DistinctUsers)
 }
 
 func TestRecord_SeparatesBotAndHumanEdits(t *testing.T) {
@@ -73,12 +68,8 @@ func TestRecord_SeparatesBotAndHumanEdits(t *testing.T) {
 	st.Record(mockEvent("bot1", true, "https://en.wikipedia.org"))
 
 	snap := st.Snapshot()
-	if snap.HumanEdits != 2 {
-		t.Errorf("expected 2 human edits, got %d", snap.HumanEdits)
-	}
-	if snap.BotEdits != 1 {
-		t.Errorf("expected 1 bot edit, got %d", snap.BotEdits)
-	}
+	assert.Equal(t, int64(2), snap.HumanEdits)
+	assert.Equal(t, int64(1), snap.BotEdits)
 }
 
 func TestRecord_CountsByServerURL(t *testing.T) {
@@ -89,12 +80,8 @@ func TestRecord_CountsByServerURL(t *testing.T) {
 	st.Record(mockEvent("carol", false, "https://commons.wikimedia.org"))
 
 	snap := st.Snapshot()
-	if snap.ByServerURL["https://en.wikipedia.org"] != 2 {
-		t.Errorf("expected 2 for en.wikipedia.org, got %d", snap.ByServerURL["https://en.wikipedia.org"])
-	}
-	if snap.ByServerURL["https://commons.wikimedia.org"] != 1 {
-		t.Errorf("expected 1 for commons.wikimedia.org, got %d", snap.ByServerURL["https://commons.wikimedia.org"])
-	}
+	assert.Equal(t, int64(2), snap.ByServerURL["https://en.wikipedia.org"])
+	assert.Equal(t, int64(1), snap.ByServerURL["https://commons.wikimedia.org"])
 }
 
 func TestRecord_IgnoresEmptyServerURL(t *testing.T) {
@@ -102,9 +89,7 @@ func TestRecord_IgnoresEmptyServerURL(t *testing.T) {
 
 	st.Record(mockEvent("iryna", false, ""))
 
-	if got := len(st.Snapshot().ByServerURL); got != 0 {
-		t.Errorf("expected empty ByServerURL map, got %d entries", got)
-	}
+	assert.Empty(t, st.Snapshot().ByServerURL)
 }
 
 func TestSnapshot_IsDeepCopy(t *testing.T) {
@@ -116,9 +101,8 @@ func TestSnapshot_IsDeepCopy(t *testing.T) {
 	snap.ByServerURL["https://en.wikipedia.org"] = 999
 
 	fresh := st.Snapshot()
-	if fresh.ByServerURL["https://en.wikipedia.org"] != 1 {
-		t.Error("Snapshot did not return a deep copy — internal map was mutated")
-	}
+	assert.Equal(t, int64(1), fresh.ByServerURL["https://en.wikipedia.org"],
+		"Snapshot did not return a deep copy — internal map was mutated")
 }
 
 func TestRecord_ConcurrentSafety(t *testing.T) {
@@ -135,7 +119,5 @@ func TestRecord_ConcurrentSafety(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := st.Snapshot().TotalMessages; got != goroutines {
-		t.Errorf("expected %d total messages after concurrent writes, got %d", goroutines, got)
-	}
+	assert.Equal(t, int64(goroutines), st.Snapshot().TotalMessages)
 }

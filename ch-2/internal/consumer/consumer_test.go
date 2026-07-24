@@ -5,6 +5,9 @@ import (
 	"ch-2/internal/consumer/models"
 	"encoding/json"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseEvent_ValidDataLine(t *testing.T) {
@@ -13,63 +16,39 @@ func TestParseEvent_ValidDataLine(t *testing.T) {
 		Bot:       false,
 		ServerURL: "https://en.wikipedia.org",
 	}
-	payload, _ := json.Marshal(event)
+	payload, err := json.Marshal(event)
+	require.NoError(t, err)
 
-	got, err := parseEvent("data: " + string(payload))
+	// parseEvent returns *apperrors.ParseError (concrete type), so use require.Nil,
+	// NOT require.NoError — a typed nil pointer boxed into error is a non-nil interface.
+	got, parseErr := parseEvent("data: " + string(payload))
+	require.Nil(t, parseErr)
 
-	if err != nil {
-		t.Fatalf("expected no error for a valid data line, got %v", err)
-	}
-	if got.User != event.User {
-		t.Errorf("expected user %q, got %q", event.User, got.User)
-	}
-	if got.Bot != event.Bot {
-		t.Errorf("expected bot=%v, got %v", event.Bot, got.Bot)
-	}
-	if got.ServerURL != event.ServerURL {
-		t.Errorf("expected serverURL %q, got %q", event.ServerURL, got.ServerURL)
-	}
+	assert.Equal(t, event.User, got.User)
+	assert.Equal(t, event.Bot, got.Bot)
+	assert.Equal(t, event.ServerURL, got.ServerURL)
 }
 
 func TestParseEvent_InvalidJSON(t *testing.T) {
 	_, err := parseEvent("data: {not valid json}")
-	if err == nil {
-		t.Error("expected error for invalid JSON")
-	}
+
 	var parseErr *apperrors.ParseError
-	if !isParseError(err, &parseErr) {
-		t.Errorf("expected *apperrors.ParseError, got %T", err)
-	}
+	require.ErrorAs(t, err, &parseErr)
 }
 
 func TestParseEvent_StripsDataPrefix(t *testing.T) {
 	event := models.WikiEvent{User: "john"}
-	payload, _ := json.Marshal(event)
+	payload, err := json.Marshal(event)
+	require.NoError(t, err)
 
-	got, err := parseEvent("data: " + string(payload))
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if got.User != "john" {
-		t.Errorf("expected user john, got %q", got.User)
-	}
+	got, parseErr := parseEvent("data: " + string(payload))
+	require.Nil(t, parseErr)
+	assert.Equal(t, "john", got.User)
 }
 
 func TestParseEvent_ErrorCode(t *testing.T) {
 	_, err := parseEvent("data: {not valid json}")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if err.Code() != "PARSE_ERROR" {
-		t.Errorf("expected code PARSE_ERROR, got %q", err.Code())
-	}
-}
 
-// isParseError is a helper that mirrors errors.As for the concrete pointer type.
-func isParseError(err *apperrors.ParseError, target **apperrors.ParseError) bool {
-	if err == nil {
-		return false
-	}
-	*target = err
-	return true
+	assert.Equal(t, "PARSE_ERROR", err.Code())
+	require.Error(t, err)
 }
