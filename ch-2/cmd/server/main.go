@@ -25,7 +25,7 @@ func main() {
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config: %v", err) // main owns process lifecycle; fatal is acceptable here
+		log.Fatalf("failed to load config: %v", err) // main owns process lifecycle; fatal is acceptable here
 	}
 
 	// consumerErr receives the terminal error from the consumer goroutine
@@ -36,7 +36,7 @@ func main() {
 			URL:       cfg.URL,
 			UserAgent: cfg.UserAgent,
 			Accept:    cfg.Accept,
-		}, st)
+		}, http.DefaultClient, st)
 	}()
 
 	api := httpapi.New(st)

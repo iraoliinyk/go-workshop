@@ -7,10 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// stubStats is a hand-written test double for the Snapshotter interface —
-// this is why the DIP interface matters: no real *stats.Stats needed.
+// stubStats is a hand-written test double for the Snapshotter interface;
+// no real *stats.Stats needed.
 type stubStats struct{ snap statsmodels.StatsSnapshot }
 
 func (s stubStats) Snapshot() statsmodels.StatsSnapshot { return s.snap }
@@ -22,19 +25,11 @@ func TestStatus_ReturnsOK(t *testing.T) {
 
 	api.Router().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: want 200, got %d", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("content-type: want application/json, got %q", ct)
-	}
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 	var body map[string]string
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body["status"] != "ok" {
-		t.Errorf(`body: want status "ok", got %q`, body["status"])
-	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
+	assert.Equal(t, "ok", body["status"])
 }
 
 func TestStats_ReturnsSnapshot(t *testing.T) {
@@ -51,21 +46,9 @@ func TestStats_ReturnsSnapshot(t *testing.T) {
 
 	api.Router().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: want 200, got %d", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("content-type: want application/json, got %q", ct)
-	}
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 	var got statsmodels.StatsSnapshot
-	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if got.TotalMessages != want.TotalMessages ||
-		got.DistinctUsers != want.DistinctUsers ||
-		got.BotEdits != want.BotEdits ||
-		got.HumanEdits != want.HumanEdits ||
-		got.ByServerURL["https://en.wikipedia.org"] != 4 {
-		t.Errorf("snapshot mismatch: want %+v, got %+v", want, got)
-	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&got))
+	assert.Equal(t, want, got)
 }

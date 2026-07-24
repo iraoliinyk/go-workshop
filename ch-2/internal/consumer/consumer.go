@@ -18,6 +18,11 @@ type Recorder interface {
 	Record(event models.WikiEvent)
 }
 
+// Inject Doer instead of http.DefaultClient
+type Doer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
 // Config holds exactly what the consumer needs. main maps config.Config into this,
 // so the consumer package stays independent of the global config package.
 type Config struct {
@@ -29,7 +34,7 @@ type Config struct {
 // Start connects to the Wikimedia SSE stream and records events until ctx is cancelled.
 // Returns a ConnectionError or StreamError on fatal failure so the caller
 // can handle process termination centrally instead of calling log.Fatal here.
-func Start(ctx context.Context, cfg Config, rec Recorder) error {
+func Start(ctx context.Context, cfg Config, client Doer, rec Recorder) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.URL, nil)
 	if err != nil {
 		return &apperrors.ConnectionError{Err: fmt.Errorf("build request: %w", err)}
@@ -39,7 +44,7 @@ func Start(ctx context.Context, cfg Config, rec Recorder) error {
 	req.Header.Set("User-Agent", cfg.UserAgent)
 	req.Header.Set("Accept", cfg.Accept)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return &apperrors.ConnectionError{Err: fmt.Errorf("do request: %w", err)}
 	}

@@ -5,6 +5,8 @@ import (
 	"ch-2/internal/stats"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // helper — builds a WikiEvent with sensible defaults, override via fields
@@ -20,21 +22,12 @@ func TestNew_InitialisesEmptyStats(t *testing.T) {
 	st := stats.New()
 	snap := st.Snapshot()
 
-	if snap.TotalMessages != 0 {
-		t.Errorf("expected 0 total messages, got %d", snap.TotalMessages)
-	}
-	if snap.DistinctUsers != 0 {
-		t.Errorf("expected 0 distinct users, got %d", snap.DistinctUsers)
-	}
-	if snap.BotEdits != 0 {
-		t.Errorf("expected 0 bot edits, got %d", snap.BotEdits)
-	}
-	if snap.HumanEdits != 0 {
-		t.Errorf("expected 0 human edits, got %d", snap.HumanEdits)
-	}
-	if len(snap.ByServerURL) != 0 {
-		t.Errorf("expected empty ByServerURL, got %v", snap.ByServerURL)
-	}
+	require.Equal(t, int64(0), snap.TotalMessages)
+	require.Equal(t, int64(0), snap.DistinctUsers)
+	require.Equal(t, int64(0), snap.BotEdits)
+	require.Equal(t, int64(0), snap.BotEdits)
+	require.Equal(t, int64(0), snap.HumanEdits)
+	require.Equal(t, 0, len(snap.ByServerURL))
 }
 
 func TestRecord_CountsTotalMessages(t *testing.T) {
@@ -44,9 +37,9 @@ func TestRecord_CountsTotalMessages(t *testing.T) {
 	st.Record(mockEvent("john", false, "https://en.wikipedia.org"))
 	st.Record(mockEvent("carol", true, "https://en.wikipedia.org"))
 
-	if got := st.Snapshot().TotalMessages; got != 3 {
-		t.Errorf("expected 3 total messages, got %d", got)
-	}
+	got := st.Snapshot().TotalMessages
+
+	require.Equal(t, int64(3), got)
 }
 
 func TestRecord_CountsDistinctUsers(t *testing.T) {
