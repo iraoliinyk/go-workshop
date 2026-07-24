@@ -28,8 +28,8 @@ func TestStatus_ReturnsOK(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 	var body map[string]string
-	assert.Equal(t, "ok", body["status"])
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
+	assert.Equal(t, "ok", body["status"])
 }
 
 func TestStats_ReturnsSnapshot(t *testing.T) {
@@ -49,6 +49,6 @@ func TestStats_ReturnsSnapshot(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 	var got statsmodels.StatsSnapshot
-	assert.Equal(t, want, got)
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&got))
+	assert.Equal(t, want, got)
 }

@@ -13,13 +13,13 @@ import (
 	"strings"
 )
 
-// Recorder is satisfied by *stats.Stats — keeps consumer free of a direct import cycle.
-type Recorder interface {
+// recorder is satisfied by *stats.Stats — keeps consumer free of a direct import cycle.
+type recorder interface {
 	Record(event models.WikiEvent)
 }
 
-// Inject Doer instead of http.DefaultClient
-type Doer interface {
+// Inject doer instead of http.DefaultClient
+type doer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
@@ -34,7 +34,7 @@ type Config struct {
 // Start connects to the Wikimedia SSE stream and records events until ctx is cancelled.
 // Returns a ConnectionError or StreamError on fatal failure so the caller
 // can handle process termination centrally instead of calling log.Fatal here.
-func Start(ctx context.Context, cfg Config, client Doer, rec Recorder) error {
+func Start(ctx context.Context, cfg Config, client doer, rec recorder) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.URL, nil)
 	if err != nil {
 		return &apperrors.ConnectionError{Err: fmt.Errorf("build request: %w", err)}
