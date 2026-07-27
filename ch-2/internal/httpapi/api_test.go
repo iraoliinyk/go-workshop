@@ -1,12 +1,13 @@
 package httpapi_test
 
 import (
-	"ch-2/internal/httpapi"
-	statsmodels "ch-2/internal/stats/models"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"ch-2/internal/httpapi"
+	statsmodels "ch-2/internal/stats/models"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

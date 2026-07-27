@@ -1,10 +1,11 @@
 package httpapi
 
 import (
-	statsmodels "ch-2/internal/stats/models"
 	"encoding/json"
 	"log"
 	"net/http"
+
+	statsmodels "ch-2/internal/stats/models"
 )
 
 // snapshotter is the read-only view of stats the HTTP API needs.

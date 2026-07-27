@@ -1,11 +1,6 @@
 package main
 
 import (
-	"ch-2/internal/apperrors"
-	"ch-2/internal/config"
-	"ch-2/internal/consumer"
-	"ch-2/internal/httpapi"
-	"ch-2/internal/stats"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +10,12 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"ch-2/internal/apperrors"
+	"ch-2/internal/config"
+	"ch-2/internal/consumer"
+	"ch-2/internal/httpapi"
+	"ch-2/internal/stats"
 )
 
 func main() {

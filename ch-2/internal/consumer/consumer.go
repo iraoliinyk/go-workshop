@@ -2,8 +2,6 @@ package consumer
 
 import (
 	"bufio"
-	"ch-2/internal/apperrors"
-	"ch-2/internal/consumer/models"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +9,9 @@ import (
 	"log"
 	"net/http"
 	"strings"
+
+	"ch-2/internal/apperrors"
+	"ch-2/internal/consumer/models"
 )
 
 // recorder is satisfied by *stats.Stats — keeps consumer free of a direct import cycle.

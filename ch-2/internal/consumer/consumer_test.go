@@ -1,8 +1,6 @@
 package consumer
 
 import (
-	"ch-2/internal/apperrors"
-	"ch-2/internal/consumer/models"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +8,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"ch-2/internal/apperrors"
+	"ch-2/internal/consumer/models"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -1,10 +1,11 @@
 package stats
 
 import (
-	consumermodels "ch-2/internal/consumer/models"
-	statsmodels "ch-2/internal/stats/models"
 	"sync"
 	"time"
+
+	consumermodels "ch-2/internal/consumer/models"
+	statsmodels "ch-2/internal/stats/models"
 )
 
 type StatsSnapshot = statsmodels.StatsSnapshot

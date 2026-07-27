@@ -1,10 +1,11 @@
 package stats_test
 
 import (
-	consumermodels "ch-2/internal/consumer/models"
-	"ch-2/internal/stats"
 	"sync"
 	"testing"
+
+	consumermodels "ch-2/internal/consumer/models"
+	"ch-2/internal/stats"
 
 	"github.com/stretchr/testify/assert"
 )
