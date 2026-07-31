@@ -11,8 +11,7 @@ services:
       - "${CONSUMER_PORT:-7001}:${CONSUMER_PORT:-7001}"
     restart: unless-stopped
     healthcheck:
-      # busybox wget probes the /status liveness endpoint; non-2xx exits non-zero -> unhealthy
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:${CONSUMER_PORT:-7001}/status"]
+      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://localhost:${CONSUMER_PORT:-7001}/status"]
       interval: 30s      # how often to run the check
       timeout: 3s        # fail the check if /status takes longer than this
       retries: 3         # consecutive failures before marking the container unhealthy

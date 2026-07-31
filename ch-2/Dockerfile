@@ -10,16 +10,18 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-# RUN CGO_ENABLED=0 GOOS=linux go build -o /wiki-recent-go ./cmd/server
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/wiki ./cmd/server
+# CGO_ENABLED=0 builds a static binary, so it can run on scratch.
+# -s -w removes debug symbols, which the final image does not need.
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/wiki ./cmd/server
 
-# busybox (not scratch) so the image ships wget for the container HEALTHCHECK.
-# The Go binary is static (CGO_ENABLED=0), so it runs on busybox unchanged.
-FROM busybox:1.37
+# scratch: the image contains only the CA bundle, the server, and busybox.
+FROM scratch
 WORKDIR /
 # CA certs are required: the consumer calls https://stream.wikimedia.org and
-# the busybox base has no cert bundle, so TLS verification would fail without this.
+# scratch has no cert bundle, so TLS verification would fail without this.
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# A static busybox, added only so the compose healthcheck can run wget.
+COPY --from=busybox:1.37-uclibc /bin/busybox /bin/busybox
 COPY --from=build /out/wiki /wiki
 EXPOSE 7001
 ENTRYPOINT ["/wiki"]
