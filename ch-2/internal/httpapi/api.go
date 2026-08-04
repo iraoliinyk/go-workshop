@@ -8,6 +8,10 @@ import (
 	statsmodels "ch-2/internal/stats/models"
 )
 
+// Mocks live in mock_api_test.go. Generated into package httpapi_test (not httpapi),
+// so the api_test.go can reach them.
+//go:generate go tool mockgen -source=api.go -destination=mock_api_test.go -package=httpapi_test -typed
+
 // snapshotter is the read-only view of stats the HTTP API needs.
 // *stats.Stats satisfies it (its Snapshot() returns statsmodels.StatsSnapshot,
 // via the type alias in stats.go), so no change to the stats package is required.

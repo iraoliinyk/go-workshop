@@ -11,16 +11,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
-// stubStats is a hand-written test double for the Snapshotter interface;
-// no real *stats.Stats needed.
-type stubStats struct{ snap statsmodels.StatsSnapshot }
-
-func (s stubStats) Snapshot() statsmodels.StatsSnapshot { return s.snap }
-
 func TestStatus_ReturnsOK(t *testing.T) {
-	api := httpapi.New(stubStats{})
+	ctrl := gomock.NewController(t)
+	api := httpapi.New(NewMocksnapshotter(ctrl))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
 
@@ -41,7 +37,12 @@ func TestStats_ReturnsSnapshot(t *testing.T) {
 		HumanEdits:    5,
 		ByServerURL:   map[string]int64{"https://en.wikipedia.org": 4},
 	}
-	api := httpapi.New(stubStats{snap: want})
+
+	ctrl := gomock.NewController(t)
+	stats := NewMocksnapshotter(ctrl)
+	stats.EXPECT().Snapshot().Return(want).Times(1)
+
+	api := httpapi.New(stats)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
 

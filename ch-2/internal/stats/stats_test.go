@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// helper — builds a WikiEvent with sensible defaults, override via fields
-func mockEvent(user string, bot bool, serverURL string) consumermodels.WikiEvent {
+// newEvent builds a WikiEvent for the tests
+func newEvent(user string, bot bool, serverURL string) consumermodels.WikiEvent {
 	return consumermodels.WikiEvent{
 		User:      user,
 		Bot:       bot,
@@ -33,9 +33,9 @@ func TestNew_InitialisesEmptyStats(t *testing.T) {
 func TestRecord_CountsTotalMessages(t *testing.T) {
 	st := stats.New()
 
-	st.Record(mockEvent("iryna", false, "https://en.wikipedia.org"))
-	st.Record(mockEvent("john", false, "https://en.wikipedia.org"))
-	st.Record(mockEvent("carol", true, "https://en.wikipedia.org"))
+	st.Record(newEvent("iryna", false, "https://en.wikipedia.org"))
+	st.Record(newEvent("john", false, "https://en.wikipedia.org"))
+	st.Record(newEvent("carol", true, "https://en.wikipedia.org"))
 
 	got := st.Snapshot().TotalMessages
 
@@ -46,9 +46,9 @@ func TestRecord_CountsDistinctUsers(t *testing.T) {
 	st := stats.New()
 
 	// iryna appears twice — should only count once
-	st.Record(mockEvent("iryna", false, "https://en.wikipedia.org"))
-	st.Record(mockEvent("iryna", false, "https://en.wikipedia.org"))
-	st.Record(mockEvent("john", false, "https://en.wikipedia.org"))
+	st.Record(newEvent("iryna", false, "https://en.wikipedia.org"))
+	st.Record(newEvent("iryna", false, "https://en.wikipedia.org"))
+	st.Record(newEvent("john", false, "https://en.wikipedia.org"))
 
 	assert.Equal(t, int64(2), st.Snapshot().DistinctUsers)
 }
@@ -56,7 +56,7 @@ func TestRecord_CountsDistinctUsers(t *testing.T) {
 func TestRecord_IgnoresEmptyUser(t *testing.T) {
 	st := stats.New()
 
-	st.Record(mockEvent("", false, "https://en.wikipedia.org"))
+	st.Record(newEvent("", false, "https://en.wikipedia.org"))
 
 	assert.Equal(t, int64(0), st.Snapshot().DistinctUsers)
 }
@@ -64,9 +64,9 @@ func TestRecord_IgnoresEmptyUser(t *testing.T) {
 func TestRecord_SeparatesBotAndHumanEdits(t *testing.T) {
 	st := stats.New()
 
-	st.Record(mockEvent("human1", false, "https://en.wikipedia.org"))
-	st.Record(mockEvent("human2", false, "https://en.wikipedia.org"))
-	st.Record(mockEvent("bot1", true, "https://en.wikipedia.org"))
+	st.Record(newEvent("human1", false, "https://en.wikipedia.org"))
+	st.Record(newEvent("human2", false, "https://en.wikipedia.org"))
+	st.Record(newEvent("bot1", true, "https://en.wikipedia.org"))
 
 	snap := st.Snapshot()
 	assert.Equal(t, int64(2), snap.HumanEdits)
@@ -76,9 +76,9 @@ func TestRecord_SeparatesBotAndHumanEdits(t *testing.T) {
 func TestRecord_CountsByServerURL(t *testing.T) {
 	st := stats.New()
 
-	st.Record(mockEvent("iryna", false, "https://en.wikipedia.org"))
-	st.Record(mockEvent("john", false, "https://en.wikipedia.org"))
-	st.Record(mockEvent("carol", false, "https://commons.wikimedia.org"))
+	st.Record(newEvent("iryna", false, "https://en.wikipedia.org"))
+	st.Record(newEvent("john", false, "https://en.wikipedia.org"))
+	st.Record(newEvent("carol", false, "https://commons.wikimedia.org"))
 
 	snap := st.Snapshot()
 	assert.Equal(t, int64(2), snap.ByServerURL["https://en.wikipedia.org"])
@@ -88,14 +88,14 @@ func TestRecord_CountsByServerURL(t *testing.T) {
 func TestRecord_IgnoresEmptyServerURL(t *testing.T) {
 	st := stats.New()
 
-	st.Record(mockEvent("iryna", false, ""))
+	st.Record(newEvent("iryna", false, ""))
 
 	assert.Empty(t, st.Snapshot().ByServerURL)
 }
 
 func TestSnapshot_IsDeepCopy(t *testing.T) {
 	st := stats.New()
-	st.Record(mockEvent("iryna", false, "https://en.wikipedia.org"))
+	st.Record(newEvent("iryna", false, "https://en.wikipedia.org"))
 
 	snap := st.Snapshot()
 	// mutating the snapshot map must not affect internal state
@@ -115,7 +115,7 @@ func TestRecord_ConcurrentSafety(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			st.Record(mockEvent("user", i%2 == 0, "https://en.wikipedia.org"))
+			st.Record(newEvent("user", i%2 == 0, "https://en.wikipedia.org"))
 		}(i)
 	}
 	wg.Wait()
