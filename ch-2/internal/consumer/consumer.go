@@ -14,6 +14,10 @@ import (
 	"ch-2/internal/consumer/models"
 )
 
+// Mocks for the collaborator interfaces below live in mock_consumer_test.go
+// (same package, test-only, so they never reach the production binary).
+//go:generate go tool mockgen -source=consumer.go -destination=mock_consumer_test.go -package=consumer -typed
+
 // recorder is satisfied by *stats.Stats — keeps consumer free of a direct import cycle.
 type recorder interface {
 	Record(event models.WikiEvent)

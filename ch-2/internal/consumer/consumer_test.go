@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestParseEvent_ValidDataLine(t *testing.T) {
@@ -59,26 +60,6 @@ func TestParseEvent_ErrorCode(t *testing.T) {
 	require.Error(t, err)
 }
 
-// ---- Start ------------------------------------------------------------
-
-// stubDoer returns a canned response/error and captures the request it received
-// (so the header test can assert on it).
-type stubDoer struct {
-	gotReq *http.Request
-	resp   *http.Response
-	err    error
-}
-
-func (s *stubDoer) Do(req *http.Request) (*http.Response, error) {
-	s.gotReq = req
-	return s.resp, s.err
-}
-
-// stubRecorder captures every event Start records.
-type stubRecorder struct{ events []models.WikiEvent }
-
-func (r *stubRecorder) Record(e models.WikiEvent) { r.events = append(r.events, e) }
-
 // makeResp builds a *http.Response with a string body.
 func makeResp(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}
@@ -91,63 +72,91 @@ func (errBody) Read(p []byte) (int, error) { return 0, fmt.Errorf("connection re
 func (errBody) Close() error               { return nil }
 
 func TestStart_RecordsValidEvents(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	body := `data: {"user":"iryna","bot":false,"server_url":"https://en.wikipedia.org"}` + "\n" +
 		"\n" + // blank separator — must be skipped
 		`data: {"user":"oli"}` + "\n"
-	d := &stubDoer{resp: makeResp(http.StatusOK, body)}
-	rec := &stubRecorder{}
+
+	d := NewMockdoer(ctrl)
+	d.EXPECT().Do(gomock.Any()).Return(makeResp(http.StatusOK, body), nil)
+
+	// InOrder encodes the sequence the stub could only check after the fact —
+	// a wrong order or an extra Record now fails inside the mock, not in an assert.
+	rec := NewMockrecorder(ctrl)
+	gomock.InOrder(
+		rec.EXPECT().Record(models.WikiEvent{
+			User:      "iryna",
+			Bot:       false,
+			ServerURL: "https://en.wikipedia.org",
+		}),
+		rec.EXPECT().Record(models.WikiEvent{User: "oli"}),
+	)
 
 	err := Start(context.Background(), Config{URL: "http://x"}, d, rec)
 
 	require.NoError(t, err)
-	require.Len(t, rec.events, 2)
-	assert.Equal(t, "iryna", rec.events[0].User)
-	assert.Equal(t, "oli", rec.events[1].User)
 }
 
 func TestStart_SkipsUnparseableLines(t *testing.T) {
+	ctrl := gomock.NewController(t)
 	body := `data: {not valid json}` + "\n" +
 		`data: {"user":"iryna"}` + "\n"
-	d := &stubDoer{resp: makeResp(http.StatusOK, body)}
-	rec := &stubRecorder{}
+
+	d := NewMockdoer(ctrl)
+	d.EXPECT().Do(gomock.Any()).Return(makeResp(http.StatusOK, body), nil)
+
+	// Exactly one Record, for the valid line only: the bad line being skipped is
+	// asserted by the absence of a second expectation, which ctrl enforces.
+	rec := NewMockrecorder(ctrl)
+	rec.EXPECT().Record(models.WikiEvent{User: "iryna"}).Times(1)
 
 	err := Start(context.Background(), Config{URL: "http://x"}, d, rec)
 
 	// parse errors are logged and skipped — stream is not broken.
 	require.NoError(t, err)
-	require.Len(t, rec.events, 1)
-	assert.Equal(t, "iryna", rec.events[0].User)
 }
 
 func TestStart_SetsRequiredHeaders(t *testing.T) {
-	d := &stubDoer{resp: makeResp(http.StatusOK, "")}
+	ctrl := gomock.NewController(t)
 	cfg := Config{
 		URL:       "http://x",
 		UserAgent: "wiki-stream-consumer/1.0",
 		Accept:    "application/json",
 	}
 
-	err := Start(context.Background(), cfg, d, &stubRecorder{})
+	// DoAndReturn replaces the stub's gotReq field: inspect the argument at call
+	// time instead of storing it for a later assert.
+	d := NewMockdoer(ctrl)
+	d.EXPECT().Do(gomock.Any()).DoAndReturn(func(req *http.Request) (*http.Response, error) {
+		assert.Equal(t, cfg.URL, req.URL.String())
+		assert.Equal(t, cfg.UserAgent, req.Header.Get("User-Agent"))
+		assert.Equal(t, cfg.Accept, req.Header.Get("Accept"))
+		return makeResp(http.StatusOK, ""), nil
+	})
+
+	// Empty body: no events, so Record must never be called.
+	err := Start(context.Background(), cfg, d, NewMockrecorder(ctrl))
 
 	require.NoError(t, err)
-	require.NotNil(t, d.gotReq)
-	assert.Equal(t, cfg.UserAgent, d.gotReq.Header.Get("User-Agent"))
-	assert.Equal(t, cfg.Accept, d.gotReq.Header.Get("Accept"))
 }
 
 func TestStart_ClientError(t *testing.T) {
-	d := &stubDoer{err: fmt.Errorf("dial tcp: refused")}
+	ctrl := gomock.NewController(t)
+	d := NewMockdoer(ctrl)
+	d.EXPECT().Do(gomock.Any()).Return(nil, fmt.Errorf("dial tcp: refused"))
 
-	err := Start(context.Background(), Config{URL: "http://x"}, d, &stubRecorder{})
+	err := Start(context.Background(), Config{URL: "http://x"}, d, NewMockrecorder(ctrl))
 
 	var connErr *apperrors.ConnectionError
 	require.ErrorAs(t, err, &connErr)
 }
 
 func TestStart_NonOKStatus(t *testing.T) {
-	d := &stubDoer{resp: makeResp(http.StatusInternalServerError, "boom")}
+	ctrl := gomock.NewController(t)
+	d := NewMockdoer(ctrl)
+	d.EXPECT().Do(gomock.Any()).Return(makeResp(http.StatusInternalServerError, "boom"), nil)
 
-	err := Start(context.Background(), Config{URL: "http://x"}, d, &stubRecorder{})
+	err := Start(context.Background(), Config{URL: "http://x"}, d, NewMockrecorder(ctrl))
 
 	var connErr *apperrors.ConnectionError
 	require.ErrorAs(t, err, &connErr)
@@ -155,9 +164,12 @@ func TestStart_NonOKStatus(t *testing.T) {
 }
 
 func TestStart_StreamError(t *testing.T) {
-	d := &stubDoer{resp: &http.Response{StatusCode: http.StatusOK, Body: errBody{}}}
+	ctrl := gomock.NewController(t)
+	d := NewMockdoer(ctrl)
+	d.EXPECT().Do(gomock.Any()).
+		Return(&http.Response{StatusCode: http.StatusOK, Body: errBody{}}, nil)
 
-	err := Start(context.Background(), Config{URL: "http://x"}, d, &stubRecorder{})
+	err := Start(context.Background(), Config{URL: "http://x"}, d, NewMockrecorder(ctrl))
 
 	var streamErr *apperrors.StreamError
 	require.ErrorAs(t, err, &streamErr)
