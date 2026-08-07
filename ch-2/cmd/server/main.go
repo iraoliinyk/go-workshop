@@ -1,18 +1,21 @@
 package main
 
 import (
-	"ch-1/internal/apperrors"
-	"ch-1/internal/consumer"
-	"ch-1/internal/stats"
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"ch-2/internal/apperrors"
+	"ch-2/internal/config"
+	"ch-2/internal/consumer"
+	"ch-2/internal/httpapi"
+	"ch-2/internal/stats"
 )
 
 func main() {
@@ -21,26 +24,29 @@ func main() {
 
 	st := stats.New()
 
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err) // main owns process lifecycle; fatal is acceptable here
+	}
+
 	// consumerErr receives the terminal error from the consumer goroutine
 	// so that process termination is decided here, not inside consumer.Start.
 	consumerErr := make(chan error, 1)
 	go func() {
-		consumerErr <- consumer.Start(ctx, st)
+		consumerErr <- consumer.Start(ctx, consumer.Config{
+			URL:       cfg.URL,
+			UserAgent: cfg.UserAgent,
+			Accept:    cfg.Accept,
+		}, http.DefaultClient, st)
 	}()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
-	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(st.Snapshot())
-	})
+	api := httpapi.New(st)
 
+	// no exponential backoff for now, just rely on docker-compose restart: unless-stopped
+	addr := fmt.Sprintf(":%d", cfg.Port)
 	server := &http.Server{
-		Addr:         ":7000",
-		Handler:      mux,
+		Addr:         addr,
+		Handler:      api.Router(),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
@@ -72,8 +78,7 @@ func main() {
 			shutdown(sig.String()) // shutdown() runs to completion
 		case err := <-consumerErr:
 			if err != nil && !errors.Is(err, context.Canceled) {
-				var appErr apperrors.AppError
-				if errors.As(err, &appErr) {
+				if appErr, ok := errors.AsType[apperrors.AppError](err); ok {
 					log.Printf("[%s] consumer failed: %v", appErr.Code(), appErr)
 				} else {
 					log.Printf("consumer failed: %v", err)
@@ -83,7 +88,7 @@ func main() {
 		}
 	}()
 
-	log.Println("listening on :7000")
+	log.Println("listening on " + addr)
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

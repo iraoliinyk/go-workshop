@@ -2,8 +2,6 @@ package consumer
 
 import (
 	"bufio"
-	"ch-1/internal/apperrors"
-	"ch-1/internal/consumer/models"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,29 +9,47 @@ import (
 	"log"
 	"net/http"
 	"strings"
+
+	"ch-2/internal/apperrors"
+	"ch-2/internal/consumer/models"
 )
 
-// Recorder is satisfied by *stats.Stats — keeps consumer free of a direct import cycle.
-type Recorder interface {
+// Mocks for the collaborator interfaces below live in mock_consumer_test.go
+// (same package, test-only, so they never reach the production binary).
+//go:generate go tool mockgen -source=consumer.go -destination=mock_consumer_test.go -package=consumer -typed
+
+// recorder is satisfied by *stats.Stats — keeps consumer free of a direct import cycle.
+type recorder interface {
 	Record(event models.WikiEvent)
 }
 
-const WikiURL = "https://stream.wikimedia.org/v2/stream/recentchange"
+// Inject doer instead of http.DefaultClient
+type doer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// Config holds exactly what the consumer needs. main maps config.Config into this,
+// so the consumer package stays independent of the global config package.
+type Config struct {
+	URL       string
+	UserAgent string
+	Accept    string
+}
 
 // Start connects to the Wikimedia SSE stream and records events until ctx is cancelled.
 // Returns a ConnectionError or StreamError on fatal failure so the caller
 // can handle process termination centrally instead of calling log.Fatal here.
-func Start(ctx context.Context, rec Recorder) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, WikiURL, nil)
+func Start(ctx context.Context, cfg Config, client doer, rec recorder) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.URL, nil)
 	if err != nil {
 		return &apperrors.ConnectionError{Err: fmt.Errorf("build request: %w", err)}
 	}
 
 	// Required by Wikimedia robot policy — generic Go UA is blocked
-	req.Header.Set("User-Agent", "wiki-stream-consumer/1.0 (https://github.com/you/wiki-stream)")
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", cfg.UserAgent)
+	req.Header.Set("Accept", cfg.Accept)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return &apperrors.ConnectionError{Err: fmt.Errorf("do request: %w", err)}
 	}
@@ -52,17 +68,13 @@ func Start(ctx context.Context, rec Recorder) error {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-
-		// Only process data lines — skip event:, id:, comments (:ok) and blank lines.
-		// Other SSE line types are valid protocol lines, not JSON payloads.
-		if !strings.HasPrefix(line, "data:") {
-			continue
+		if strings.TrimSpace(line) == "" {
+			continue // skip blank separator lines
 		}
-
 		event, err := parseEvent(line)
 		if err != nil {
 			// ParseError: log and continue — stream is not broken
-			log.Printf("[%s] %v", err.Code(), err)
+			log.Printf("[%s] %v %s", err.Code(), err, line)
 			continue
 		}
 		rec.Record(event)

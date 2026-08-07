@@ -1,0 +1,18 @@
+services:
+  wiki:                             
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wiki-recent-go:latest
+    container_name: wiki-recent
+    env_file: 
+      - .env
+    ports:
+      - "${CONSUMER_PORT:-7001}:${CONSUMER_PORT:-7001}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://localhost:${CONSUMER_PORT:-7001}/status"]
+      interval: 30s      # how often to run the check
+      timeout: 3s        # fail the check if /status takes longer than this
+      retries: 3         # consecutive failures before marking the container unhealthy
+      start_period: 5s   # grace window on startup; failures here don't count toward retries

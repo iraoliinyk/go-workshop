@@ -5,3 +5,6 @@
 _debug_bin
 *.exe
 c.out
+
+.env
+.vscode
