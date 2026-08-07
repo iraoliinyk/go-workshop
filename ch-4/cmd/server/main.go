@@ -60,7 +60,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("repository: %v", err)
 	}
-	defer stores.Close()
+	defer func() { _ = stores.Close() }()
 
 	snapshotFlusher, err := flusher.New(liveStats, stores.Stats, flusher.Config{
 		Interval:      cfg.StatsFlushInterval,

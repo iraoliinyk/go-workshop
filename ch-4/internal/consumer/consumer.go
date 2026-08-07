@@ -55,7 +55,7 @@ func Start(ctx context.Context, cfg Config, client doer, rec recorder) error {
 	if err != nil {
 		return &apperrors.ConnectionError{Err: fmt.Errorf("do request: %w", err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check the status before reading anything from the stream.
 	if resp.StatusCode != http.StatusOK {
