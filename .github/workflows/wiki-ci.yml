@@ -61,11 +61,8 @@ jobs:
           go-version-file: ${{ needs.resolveChapter.outputs.chapter }}/go.mod
           cache-dependency-path: ${{ needs.resolveChapter.outputs.chapter }}/go.sum
       - name: Run golangci-lint
-        # Installs golangci-lint and runs it. `install-mode` is left at its default
-        # of `binary`, which downloads the prebuilt release — far faster than the
-        # `goinstall` mode, and the only one upstream considers reliable: building
-        # from sources compiles against whatever Go version the runner happens to
-        # have and can resolve dependencies that were never tested together.
+        # Installs golangci-lint and runs it. As it downloads the prebuilt release 
+        # — far faster than the `goinstall` mode.
         # https://golangci-lint.run/docs/welcome/install/local/#install-from-sources
         uses: golangci/golangci-lint-action@v9
         with:
@@ -134,10 +131,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
       - name: Set up Docker Buildx
+        # The Dockerfile pins its build stage to BUILDPLATFORM. 
+        # So the scratch stage only copies files, and
+        # nothing ever executes on the non-native architecture.
         uses: docker/setup-buildx-action@v4
 
       - name: Build image

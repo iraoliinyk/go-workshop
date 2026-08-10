@@ -1,225 +1,213 @@
-# CH-3 — Wikipedia Stream Consumer
+# CH-4 — CI/CD workflows and how to test them locally
 
-A Go service that consumes the Wikimedia event stream, aggregates statistics, and
-serves them over HTTP. It keeps its data in memory or persists a time series to
-Cassandra, and `/stats` is protected by JWT auth.
+The repository contains two GitHub Actions workflows.
 
-Server on **`:7001`**:
+| Workflow | When it runs | What it does |
+| --- | --- | --- |
+| `.github/workflows/wiki-ci.yml` | On every push and pull request for `main` and the `ch-*` branches | Lints the code, runs the tests, and builds the Docker image |
+| `.github/workflows/wiki-cd.yml` | After CI finishes successfully on `main` | Publishes the Docker image to GHCR |
 
-| Method | Path             | Access    | Description                      |
-| ------ | ---------------- | --------- | -------------------------------- |
-| `GET`  | `/status`        | public    | Health check                     |
-| `POST` | `/auth/register` | public    | Create an account                |
-| `POST` | `/auth/login`    | public    | Exchange credentials for a token |
-| `POST` | `/auth/logout`   | protected | Revoke the presented token       |
-| `GET`  | `/stats`         | protected | Current aggregated statistics    |
+## Jobs
 
-All commands assume you are in `ch-4/`. You need a `.env` with `JWT_SECRET`
-(≥ 32 bytes) — the app refuses to start without it. Copy `.env.example` to start.
+`wiki-ci` contains five jobs:
+
+| Job | What it does |
+| --- | --- |
+| `resolveChapter` | Decides which chapter directory the run works on |
+| `lint` | Runs golangci-lint |
+| `unitTest` | Runs `go test -race ./...` |
+| `integrationTest` | Runs the tests that need a real Cassandra node |
+| `dockerBuild` | Builds the image for `linux/amd64` and `linux/arm64`, without pushing it |
+
+`wiki-cd` contains one job:
+
+| Job | What it does |
+| --- | --- |
+| `publishImage` | Logs in to GHCR and pushes the image |
+
+All four later CI jobs depend on `resolveChapter`, so it always runs first.
+
+## Why `resolveChapter` exists
+
+The repository has a root folder and inner projects: `ch-1`, `ch-2`, and so on up to
+`ch-10`. Each inner project is independent and can run on its own. The branches follow
+the same naming pattern, so branch `ch-4` matches directory `ch-4/`.
+
+Because of this, the workflows do not hard-code a directory. The `resolveChapter` job
+works out the correct chapter first and shares it as a variable. Every other job then
+reads that value:
+
+```yaml
+working-directory: ${{ needs.resolveChapter.outputs.chapter }}
+```
+
+The rule is simple:
+
+- If the branch name looks like `ch-<number>`, the job uses that directory.
+- For any other branch, including `main`, the job uses the chapter directory with the
+  highest number.
+
+This means the same workflow files will keep working for `ch-5` up to `ch-10`. You do
+not need to edit them when you add a new chapter.
 
 ---
 
-## Everything in Docker
+## Testing the workflows locally with act
+
+[act](https://github.com/nektos/act) runs GitHub Actions workflows on your own machine
+inside Docker containers. You can check a change in seconds instead of pushing it to
+GitHub and waiting for the result.
+
+Docker must be running before you start.
+
+### 1. Install act
 
 ```bash
-docker compose up -d --build
-docker compose ps          # both services; cassandra should be (healthy)
-docker compose logs -f wiki
+brew install act
 ```
 
-`wiki` waits for Cassandra's healthcheck, so the first start takes about a minute
-while the node boots.
+### 2. Run act from the repository root
 
-Read the persisted series back:
+act looks for `.github/workflows/` in the current directory, so run every command from
+the root of the repository, not from `ch-4/`.
 
-```bash
-docker exec cassandra cqlsh -e \
-  "SELECT snapshot_ts, total_messages, bot_edits, human_edits, distinct_users
-     FROM wikistream.stats_snapshot WHERE day = toDate(now()) LIMIT 5;"
-```
+### 3. Apple M-series chip
 
-The `WHERE day = toDate(now())` matters. `day` is the partition key, so without it
-the query scans every partition and returns rows in token order — which is usually
-an old day, not the run you just started. With it you get today's partition, newest
-first.
-
-### Tear down
-
-```bash
-docker compose down       # keeps the cassandra-data volume: accounts and the
-                          # time series survive the restart
-docker compose down -v    # also wipes the volume
-```
-
----
-
-## Cassandra in Docker, app on the host
-
-```bash
-docker compose up -d cassandra
-go run ./cmd/server
-```
-
-Uses `.env`, which the host process does read (the container does not — Compose
-injects those variables through `env_file` instead).
-
----
-
-## In-memory, no database
-
-Either as a container:
-
-```bash
-docker compose run -d --rm --no-deps --service-ports \
-  -e DB_BACKEND=in-memory -e STATS_FLUSH_INTERVAL=10s wiki
-```
-
-`--no-deps` skips Cassandra, `--service-ports` publishes `7001`. **Stop the main
-service first** (`docker compose stop wiki`) or the port is already taken:
+On an M-series Mac, act prints this warning:
 
 ```text
-Bind for 0.0.0.0:7001 failed: port is already allocated
+WARN ⚠ You are using Apple M-series chip and you have not specified container
+architecture, you might encounter issues while running act. If so, try running it
+with '--container-architecture linux/amd64'. ⚠
 ```
 
-Compose leaves the failed container behind — `docker rm -f <name>` to clear it.
-
-Or on the host:
+Add the flag to your commands:
 
 ```bash
-DB_BACKEND=in-memory STATS_FLUSH_INTERVAL=10s go run ./cmd/server
+act -l --container-architecture linux/amd64
 ```
+
+To avoid typing it every time, save it once in a `.actrc` file in the repository root:
+
+```bash
+echo "--container-architecture linux/amd64" > .actrc
+```
+
+### 4. List the workflows
+
+```bash
+act -l
+```
+
+This shows every job, its workflow, and the events that trigger it. The **Stage**
+column shows the order: `resolveChapter` is alone in stage 0, and the other CI jobs
+follow in stage 1.
+
+### 5. Check each job without running it
+
+The `-n` flag (dry run) reads the workflow and checks that all expressions and
+conditions are correct. It does not start any container, so it is very fast.
+
+```bash
+act push -n -j resolveChapter
+act push -n -j lint
+act push -n -j unitTest
+act push -n -j dockerBuild
+```
+
+Do not dry run `integrationTest`, and do not dry run the whole `push` event. That job
+uses a service container, and act (version 0.2.89) crashes when it checks the health of
+a service that a dry run never created. This is a bug in act, not a problem in the
+workflow.
+
+### 6. Run the full push event
+
+```bash
+act push --concurrent-jobs 1
+```
+
+By default act starts all jobs at the same time on one machine. On GitHub each job gets
+its own runner, so this is not the same situation. Jobs that run together can compete
+for memory and for the Go cache, and a job can fail for that reason alone.
+`--concurrent-jobs 1` runs the jobs one after another. It takes longer, but the result
+is easier to trust.
 
 ---
 
-## Try the API — Postman
+## Testing the merge to `main`
 
-`postman_collection.json` (Collection v2.1) walks the whole auth flow against a
-running server. Import it in Postman: **Import → File → `postman_collection.json`**.
+`wiki-cd` does not start on its own. It starts only after `wiki-ci` finishes, through
+the `workflow_run` event, and it publishes the image only when three conditions are
+true:
 
-Ten requests, in order — run them top to bottom, or use **Run collection**:
-
-| # | Request                          | Expect |
-| - | -------------------------------- | ------ |
-| 1 | Health Check                     | 200    |
-| 2 | Register User                    | 201    |
-| 3 | Register Duplicate               | 409    |
-| 4 | Register Weak Password           | 400    |
-| 5 | Login                            | 200    |
-| 6 | Login Wrong Password             | 401    |
-| 7 | Fetch Stats (with token)         | 200    |
-| 8 | Fetch Stats without token        | 401    |
-| 9 | Logout                           | 204    |
-| 10| Verify Revoked Token             | 401    |
-
-Every request carries test scripts, so failures show up in Postman's **Test
-Results** tab rather than needing to be eyeballed. Requests 8 and 10 are the ones
-that give the run its meaning: `/stats` is refused *before* a token exists and again
-*after* logout.
-
-You do not need to copy the token by hand — **Login** stores it in the collection
-variable `ACCESS_TOKEN`, and the protected requests read it from there. **Register
-User** also regenerates `TEST_EMAIL` with a timestamp on each run, so repeating the
-collection does not fail on an address that already exists.
-
-Collection variables, editable under the collection's **Variables** tab:
-
-| Variable        | Default                    |
-| --------------- | -------------------------- |
-| `BASE_URL`      | `http://localhost:7001`    |
-| `TEST_EMAIL`    | `go-ch4@example.test`      |
-| `TEST_PASSWORD` | `correct-horse-battery`    |
-
-Point `BASE_URL` elsewhere to test another instance. The routes are **not**
-versioned — there is no `/v1` prefix.
-
-To run it from the command line instead, install
-[newman](https://github.com/postmanlabs/newman) (not currently installed here):
-
-```bash
-npx newman run postman_collection.json
+```yaml
+github.event.workflow_run.conclusion == 'success' &&
+github.event.workflow_run.head_branch == 'main' &&
+github.event.workflow_run.event == 'push'
 ```
 
----
+act cannot create this situation by itself. It never runs CI and CD one after the
+other, and it does not invent the values above. If you simply run `act workflow_run`,
+all three values are empty, the condition is false, and the job is skipped without any
+message. The command still finishes with success, so it looks like a passing test even
+though nothing was tested.
 
-## Tests
+To test the condition, you must describe the CI run yourself in a JSON file and pass it
+with `-e`. These files are local helpers. They are not part of the repository, so
+create them yourself in `.github/act/`.
 
-Regular tests, no database:
+### `workflow_run-success.json`
 
-```bash
-go test -race ./...
+This file describes a **successful** CI run on `main`. All three conditions are true,
+so the CD job should start.
+
+```json
+{
+  "workflow_run": {
+    "name": "CI (wiki)",
+    "conclusion": "success",
+    "head_branch": "main",
+    "event": "push",
+    "head_sha": "0000000000000000000000000000000000000000"
+  }
+}
 ```
 
-Integration tests against a real node:
+### `workflow_run-rejected.json`
 
-```bash
-docker compose up -d cassandra
-go test -tags=integration -race -count=1 ./internal/db/cassandra/...
+This file is identical except for one field: `"conclusion": "failure"`. It describes a
+CI run that **failed** on `main`. The condition is false, so the CD job must not start.
+
+```json
+{
+  "workflow_run": {
+    "name": "CI (wiki)",
+    "conclusion": "failure",
+    "head_branch": "main",
+    "event": "push",
+    "head_sha": "0000000000000000000000000000000000000000"
+  }
+}
 ```
 
-They are behind `//go:build integration`, so without the tag that package reports
-`no test files` — expected. `-count=1` defeats the test cache, which would
-otherwise hide the node's current state. The tag only *adds* files, so one command
-runs both suites:
+### Run both checks
 
 ```bash
-go test -tags=integration -race ./...
+act workflow_run -n -e .github/act/workflow_run-success.json
+act workflow_run -n -e .github/act/workflow_run-rejected.json
 ```
 
-A single test (the tag is still required, or `-run` matches nothing):
+What you should see:
 
-```bash
-go test -tags=integration -race -v -run TestStatsStore_PrimaryKey ./internal/db/cassandra/
-```
+| File | Expected result |
+| --- | --- |
+| `workflow_run-success.json` | The job runs and prints its steps, up to `Extract Docker metadata` |
+| `workflow_run-rejected.json` | The job is skipped and prints **no** steps at all |
 
-`TestMain` waits up to 30s for port 9042 and then fails with a hint, so a run
-started immediately after `compose up -d` on a cold node may need a retry.
+The second file is the more important one. A condition that allows the correct case is
+easy to write; the real question is whether it also blocks the wrong case. This test
+proves that a failed CI run cannot publish an image. You can also copy the file and
+change `head_branch` to `ch-4` to check that a chapter branch cannot publish either.
 
-Point the tests elsewhere with `CASSANDRA_HOSTS` (default `127.0.0.1:9042`) or
-`CASSANDRA_IT_KEYSPACE` (default `wikistream_it`, kept separate from your dev data
-in `wikistream`). Bootstrap uses `CREATE TABLE IF NOT EXISTS` and never migrates an
-existing keyspace, so a changed `PRIMARY KEY` in `bootstrap.go` is only visible to
-the schema assertions in a **fresh** keyspace.
-
----
-
-## Configuration
-
-Read from the environment; `.env` in the working directory is loaded first, and
-real environment variables win over it.
-
-| Env var                 | Default          | Purpose                             |
-| ----------------------- | ---------------- | ----------------------------------- |
-| `CONSUMER_PORT`         | `7001`           | HTTP listen port                    |
-| `DB_BACKEND`            | `in-memory`      | `in-memory` \| `cassandra`          |
-| `LOGGER`                | `DEBUG`          | `DEBUG` \| `PROD`                   |
-| `STATS_FLUSH_INTERVAL`  | `10s`            | How often a snapshot is persisted   |
-| `JWT_SECRET`            | **required**     | HS256 key, **≥ 32 bytes**           |
-| `JWT_ISSUER`            | `wiki-stream-go` | `iss` claim                         |
-| `ACCESS_TOKEN_TTL`      | `1h`             | Token lifetime                      |
-| `BCRYPT_COST`           | `12`             | Password hashing cost (10..31)      |
-| `CASSANDRA_HOSTS`       | `127.0.0.1`      | Comma-separated contact points      |
-| `CASSANDRA_KEYSPACE`    | `wikistream`     | Created on startup if missing       |
-| `CASSANDRA_CONSISTENCY` | `QUORUM`         | Read + write consistency            |
-| `CASSANDRA_TIMEOUT`     | `5s`             | Per-query timeout                   |
-
-`DEBUG` logs every request; `PROD` logs only errors.
-
----
-
-## Troubleshooting
-
-**`required environment variable "JWT_SECRET" is not set`** — no `.env` in the
-working directory, or it does not define `JWT_SECRET`.
-
-**`missing unit in duration "10"`** — durations need a unit. Use
-`STATS_FLUSH_INTERVAL=10s`, not `=10`. Same for `ACCESS_TOKEN_TTL` and
-`CASSANDRA_TIMEOUT`.
-
-**`bind: address already in use`** — something already holds `7001`. Usually the
-compose `wiki` service; `docker compose stop wiki`, or set `CONSUMER_PORT`.
-
-**`gocql: unable to connect to initial hosts`** — Cassandra is not up yet. Check
-`docker compose ps` for `(healthy)`; a cold start takes about a minute.
-
-**Account gone after a restart** — you were on `DB_BACKEND=in-memory`, or you ran
-`docker compose down -v` and wiped the volume.
+Always keep the `-n` flag here. The `publishImage` job pushes to a real registry, and
+you do not want a local test to publish an image.
