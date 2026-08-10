@@ -1,60 +1,98 @@
-name: CI (ch-4)
-run-name: CI ch-4 on ${{ github.ref_name }}
+name: CI (wiki)
+run-name: CI on ${{ github.head_ref || github.ref_name }}
 
 on:
   push:
     branches:
       - main
-      - ch-4
+      - 'ch-*'
+    # Path filters cannot use expressions, so they match every chapter and the
+    # resolveChapter job narrows it down to the one this run actually builds.
     paths:
-      - 'ch-4/**'
-      - '.github/workflows/ch-4-ci.yml'
+      - 'ch-*/**'
+      - '.github/workflows/wiki-ci.yml'
   pull_request:
     branches:
       - main
-      - ch-4
+      - 'ch-*'
     paths:
-      - 'ch-4/**'
-      - '.github/workflows/ch-4-ci.yml'
+      - 'ch-*/**'
+      - '.github/workflows/wiki-ci.yml'
 
 permissions:
   contents: read
 
-# The module lives in ch-4/, not at the repo root, so every `run` step needs to
-# start there. Action inputs are not covered by this and take explicit paths.
-defaults:
-  run:
-    working-directory: ch-4
-
 jobs:
+  resolveChapter:
+    # Every chapter is its own Go module in its own directory, and a chapter
+    # branch is named after the directory it adds (ch-4 -> ch-4/). Branches that
+    # are not chapters — main above all — fall back to the highest-numbered ch-*
+    # directory in the tree, i.e. the newest chapter merged so far.
+    runs-on: ubuntu-latest
+    outputs:
+      chapter: ${{ steps.resolve.outputs.chapter }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve chapter directory
+        id: resolve
+        # The branch name goes through env rather than direct interpolation, so a
+        # branch containing shell metacharacters cannot inject into this script.
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          if [[ "$BRANCH" =~ ^ch-[0-9]+$ ]]; then
+            chapter="$BRANCH"
+          else
+            chapter=$(ls -d ch-*/ 2>/dev/null | tr -d '/' | sort -V | tail -1)
+          fi
+          if [[ -z "$chapter" || ! -f "$chapter/go.mod" ]]; then
+            echo "::error::no chapter module resolved for branch '$BRANCH' (got '$chapter')"
+            exit 1
+          fi
+          echo "chapter=$chapter" >> "$GITHUB_OUTPUT"
+          echo "Building \`$chapter\`" >> "$GITHUB_STEP_SUMMARY"
+
   lint:
+    needs: resolveChapter
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v7
         with:
-          go-version-file: ch-4/go.mod
-          cache-dependency-path: ch-4/go.sum
+          go-version-file: ${{ needs.resolveChapter.outputs.chapter }}/go.mod
+          cache-dependency-path: ${{ needs.resolveChapter.outputs.chapter }}/go.sum
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
-          working-directory: ch-4
+          working-directory: ${{ needs.resolveChapter.outputs.chapter }}
 
   unitTest:
+    needs: resolveChapter
     runs-on: ubuntu-latest
+    # The module lives in the chapter directory, not at the repo root, so every
+    # `run` step needs to start there. Action inputs are not covered by this and
+    # take explicit paths.
+    defaults:
+      run:
+        working-directory: ${{ needs.resolveChapter.outputs.chapter }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v7
         with:
-          go-version-file: ch-4/go.mod
-          cache-dependency-path: ch-4/go.sum
+          go-version-file: ${{ needs.resolveChapter.outputs.chapter }}/go.mod
+          cache-dependency-path: ${{ needs.resolveChapter.outputs.chapter }}/go.sum
       - name: Run unit tests
         # No -tags=integration, so the build-tagged Cassandra tests are excluded.
         run: go test -race ./...
 
   integrationTest:
+    needs: resolveChapter
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ needs.resolveChapter.outputs.chapter }}
     services:
       # Same node docker-compose.yaml provides locally. A service container is used
       # instead of `docker compose up cassandra` because the compose file's wiki
@@ -77,8 +115,8 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v7
         with:
-          go-version-file: ch-4/go.mod
-          cache-dependency-path: ch-4/go.sum
+          go-version-file: ${{ needs.resolveChapter.outputs.chapter }}/go.mod
+          cache-dependency-path: ${{ needs.resolveChapter.outputs.chapter }}/go.sum
       - name: Run integration tests
         env:
           CASSANDRA_HOSTS: 127.0.0.1:9042
@@ -86,7 +124,8 @@ jobs:
 
   dockerBuild:
     # Build only — no registry login and no push. This job exists to prove the
-    # image still compiles; publishing is handled by ch-4-cd.yml.
+    # image still compiles; publishing is handled by wiki-cd.yml.
+    needs: resolveChapter
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -101,9 +140,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           # The Dockerfile copies go.mod/go.sum from the build context, so the
-          # context must be ch-4 rather than the repo root.
-          context: ch-4
-          file: ch-4/Dockerfile
+          # context must be the chapter directory rather than the repo root.
+          context: ${{ needs.resolveChapter.outputs.chapter }}
+          file: ${{ needs.resolveChapter.outputs.chapter }}/Dockerfile
           push: false
           platforms: linux/amd64,linux/arm64
           # Warms the same gha cache the CD build reads, so publishing after a
