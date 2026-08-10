@@ -1,0 +1,112 @@
+name: CI (ch-4)
+run-name: CI ch-4 on ${{ github.ref_name }}
+
+on:
+  push:
+    branches:
+      - main
+      - ch-4
+    paths:
+      - 'ch-4/**'
+      - '.github/workflows/ch-4-ci.yml'
+  pull_request:
+    branches:
+      - main
+      - ch-4
+    paths:
+      - 'ch-4/**'
+      - '.github/workflows/ch-4-ci.yml'
+
+permissions:
+  contents: read
+
+# The module lives in ch-4/, not at the repo root, so every `run` step needs to
+# start there. Action inputs are not covered by this and take explicit paths.
+defaults:
+  run:
+    working-directory: ch-4
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: ch-4/go.mod
+          cache-dependency-path: ch-4/go.sum
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: ch-4
+
+  unitTest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: ch-4/go.mod
+          cache-dependency-path: ch-4/go.sum
+      - name: Run unit tests
+        # No -tags=integration, so the build-tagged Cassandra tests are excluded.
+        run: go test -race ./...
+
+  integrationTest:
+    runs-on: ubuntu-latest
+    services:
+      # Same node docker-compose.yaml provides locally. A service container is used
+      # instead of `docker compose up cassandra` because the compose file's wiki
+      # service reads an env_file (.env) that is not committed.
+      cassandra:
+        image: cassandra:5.0.8
+        ports:
+          - 9042:9042
+        env:
+          CASSANDRA_CLUSTER_NAME: wikistream
+          MAX_HEAP_SIZE: 512M
+          HEAP_NEWSIZE: 100M
+        options: >-
+          --health-cmd "cqlsh -e 'SELECT bootstrapped FROM system.local' | grep -q COMPLETED"
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 20
+          --health-start-period 60s
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: ch-4/go.mod
+          cache-dependency-path: ch-4/go.sum
+      - name: Run integration tests
+        env:
+          CASSANDRA_HOSTS: 127.0.0.1:9042
+        run: go test -tags=integration ./...
+
+  dockerBuild:
+    # Build only — no registry login and no push. This job exists to prove the
+    # image still compiles; publishing is handled by ch-4-cd.yml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          # The Dockerfile copies go.mod/go.sum from the build context, so the
+          # context must be ch-4 rather than the repo root.
+          context: ch-4
+          file: ch-4/Dockerfile
+          push: false
+          platforms: linux/amd64,linux/arm64
+          # Warms the same gha cache the CD build reads, so publishing after a
+          # green CI run is mostly a re-tag rather than a rebuild.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
