@@ -25,9 +25,7 @@ permissions:
 jobs:
   resolveChapter:
     # Every chapter is its own Go module in its own directory, and a chapter
-    # branch is named after the directory it adds (ch-4 -> ch-4/). Branches that
-    # are not chapters — main above all — fall back to the highest-numbered ch-*
-    # directory in the tree, i.e. the newest chapter merged so far.
+    # branch is named after the directory it adds (ch-4 -> ch-4/).
     runs-on: ubuntu-latest
     outputs:
       chapter: ${{ steps.resolve.outputs.chapter }}
@@ -63,6 +61,12 @@ jobs:
           go-version-file: ${{ needs.resolveChapter.outputs.chapter }}/go.mod
           cache-dependency-path: ${{ needs.resolveChapter.outputs.chapter }}/go.sum
       - name: Run golangci-lint
+        # Installs golangci-lint and runs it. `install-mode` is left at its default
+        # of `binary`, which downloads the prebuilt release — far faster than the
+        # `goinstall` mode, and the only one upstream considers reliable: building
+        # from sources compiles against whatever Go version the runner happens to
+        # have and can resolve dependencies that were never tested together.
+        # https://golangci-lint.run/docs/welcome/install/local/#install-from-sources
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
@@ -72,7 +76,7 @@ jobs:
     needs: resolveChapter
     runs-on: ubuntu-latest
     # The module lives in the chapter directory, not at the repo root, so every
-    # `run` step needs to start there. Action inputs are not covered by this and
+    # run step needs to start there. Action inputs are not covered by this and
     # take explicit paths.
     defaults:
       run:
@@ -123,8 +127,8 @@ jobs:
         run: go test -tags=integration ./...
 
   dockerBuild:
-    # Build only — no registry login and no push. This job exists to prove the
-    # image still compiles; publishing is handled by wiki-cd.yml.
+    # Build only. No registry login and no push, just to prove the
+    # image still compiles. Publishing is handled by wiki-cd.yml.
     needs: resolveChapter
     runs-on: ubuntu-latest
     steps:
@@ -145,7 +149,5 @@ jobs:
           file: ${{ needs.resolveChapter.outputs.chapter }}/Dockerfile
           push: false
           platforms: linux/amd64,linux/arm64
-          # Warms the same gha cache the CD build reads, so publishing after a
-          # green CI run is mostly a re-tag rather than a rebuild.
           cache-from: type=gha
           cache-to: type=gha,mode=max
