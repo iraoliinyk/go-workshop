@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Go build / debug artefacts
+_debug_bin
+*.exe
+c.out
+
+# Secrets and editor state
+.env
+.vscode
+
+# Working notes, kept local
+/docs/
