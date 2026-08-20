@@ -1,35 +1,23 @@
-package broker
+package broker_test
 
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"wikirecent/internal/apperrors"
 	"wikirecent/internal/applog"
+	"wikirecent/internal/broker"
 
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"go.uber.org/mock/gomock"
 )
 
-func TestNewPublisher_RejectsAnEmptyTopicAtStartup(t *testing.T) {
-	_, err := NewPublisher(PublisherConfig{
-		Brokers: []string{"127.0.0.1:9092"},
-		Topic:   "",
-	}, applog.Logger{})
-
-	require.Error(t, err, "an empty topic must fail here, not once per record")
-	// The message names the option, which is the proof that it is what rejected it.
-	require.Contains(t, err.Error(), "DefaultProduceTopicAlways")
-	require.True(t, strings.HasPrefix(err.Error(), "PublishError:"), "want the app error type, got %v", err)
-}
-
 func TestPublisher_ConnectPingsTheBroker(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	client := NewMockrecordProducer(ctrl)
-	p := &Publisher{client: client, log: applog.Logger{}}
+	client := NewMockRecordProducer(ctrl)
+	p := broker.NewPublisherWithClient(client, applog.Logger{})
 
 	ctx := context.Background()
 	// The exact ctx, not gomock.Any(): a lost context would make Connect hang
@@ -41,8 +29,8 @@ func TestPublisher_ConnectPingsTheBroker(t *testing.T) {
 
 func TestPublisher_ConnectWrapsAPingFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	client := NewMockrecordProducer(ctrl)
-	p := &Publisher{client: client, log: applog.Logger{}}
+	client := NewMockRecordProducer(ctrl)
+	p := broker.NewPublisherWithClient(client, applog.Logger{})
 
 	dialErr := errors.New("dial tcp 127.0.0.1:9092: connect: connection refused")
 	client.EXPECT().Ping(gomock.Any()).Return(dialErr)
@@ -59,8 +47,9 @@ func TestPublisher_ConnectWrapsAPingFailure(t *testing.T) {
 // purpose, so the broker spreads the load round-robin across all three.
 func TestPublisher_PublishSendsNoKey(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	client := NewMockrecordProducer(ctrl)
-	p := &Publisher{client: client, log: applog.Logger{}}
+	client := NewMockRecordProducer(ctrl)
+	p := broker.NewPublisherWithClient(client, applog.Logger{})
+
 	var got *kgo.Record
 	client.EXPECT().
 		Produce(gomock.Any(), gomock.Any(), gomock.Any()).

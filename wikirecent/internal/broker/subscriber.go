@@ -24,12 +24,12 @@ type SubscriberConfig struct {
 }
 
 type Subscriber struct {
-	client recordPoller
+	client RecordPoller
 	log    applog.Logger
-	stats  recorder
+	stats  Recorder
 }
 
-func NewSubscriber(cfg SubscriberConfig, log applog.Logger, stats recorder) (*Subscriber, error) {
+func NewSubscriber(cfg SubscriberConfig, log applog.Logger, stats Recorder) (*Subscriber, error) {
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(cfg.Brokers...),
 		kgo.ClientID("wiki-consumer"),
@@ -42,7 +42,14 @@ func NewSubscriber(cfg SubscriberConfig, log applog.Logger, stats recorder) (*Su
 		return nil, &apperrors.ConsumeError{Err: err}
 	}
 
-	return &Subscriber{client: client, log: log, stats: stats}, nil
+	return NewSubscriberWithClient(client, log, stats), nil
+}
+
+// NewSubscriberWithClient builds a Subscriber on a poller the caller already has.
+// NewSubscriber is the normal path; this is the seam that lets a caller supply its
+// own client, which is how the tests reach the poll loop without a live broker.
+func NewSubscriberWithClient(client RecordPoller, log applog.Logger, stats Recorder) *Subscriber {
+	return &Subscriber{client: client, log: log, stats: stats}
 }
 
 // Connect checks that the broker answers.
@@ -81,7 +88,7 @@ func (s *Subscriber) Run(ctx context.Context) error {
 				return // BatchSlice would hand back one empty batch to run
 			}
 			for _, sub := range batch.BatchSlice(p.Records, maxBatchSize) {
-				g.Go(func() error { return s.handleBatch(gctx, sub) })
+				g.Go(func() error { return s.HandleBatch(gctx, sub) })
 			}
 		})
 
@@ -100,7 +107,7 @@ func (s *Subscriber) Run(ctx context.Context) error {
 	}
 }
 
-func (s *Subscriber) handleBatch(ctx context.Context, batch []*kgo.Record) error {
+func (s *Subscriber) HandleBatch(ctx context.Context, batch []*kgo.Record) error {
 	if ctxDone(ctx) {
 		return ctx.Err()
 	}

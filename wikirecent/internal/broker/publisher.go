@@ -1,9 +1,9 @@
 package broker
 
 import (
+	"context"
 	"wikirecent/internal/apperrors"
 	"wikirecent/internal/applog"
-	"context"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -15,7 +15,7 @@ type PublisherConfig struct {
 }
 
 type Publisher struct {
-	client recordProducer
+	client RecordProducer
 	log    applog.Logger
 }
 
@@ -30,7 +30,14 @@ func NewPublisher(cfg PublisherConfig, log applog.Logger) (*Publisher, error) {
 		return nil, &apperrors.PublishError{Err: err}
 	}
 
-	return &Publisher{client: client, log: log}, nil
+	return NewPublisherWithClient(client, log), nil
+}
+
+// NewPublisherWithClient builds a Publisher on a producer the caller already has.
+// NewPublisher is the normal path; this is the seam that lets a caller supply its
+// own client, which is how the tests reach the type without a live broker.
+func NewPublisherWithClient(client RecordProducer, log applog.Logger) *Publisher {
+	return &Publisher{client: client, log: log}
 }
 
 // Connect checks that at least one seed broker answers, so a wrong address fails

@@ -1,9 +1,13 @@
-package broker
+package broker_test
 
 import (
 	"context"
 	"errors"
 	"testing"
+
+	"wikirecent/internal/applog"
+	"wikirecent/internal/broker"
+	"wikirecent/internal/events"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,9 +20,9 @@ const validEvent = `{"user":"iryna","bot":false,"server_url":"https://ca.wikiped
 // testEnv wires a Subscriber onto the generated mocks, with no broker behind it.
 // Expectations are declared per test; anything not expected fails the test.
 type testEnv struct {
-	sub    *Subscriber
-	poller *MockrecordPoller
-	stats  *Mockrecorder
+	sub    *broker.Subscriber
+	poller *MockRecordPoller
+	stats  *MockRecorder
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -31,12 +35,12 @@ func newTestEnv(t *testing.T) *testEnv {
 	t.Cleanup(cancel)
 
 	env := &testEnv{
-		poller: NewMockrecordPoller(ctrl),
-		stats:  NewMockrecorder(ctrl),
+		poller: NewMockRecordPoller(ctrl),
+		stats:  NewMockRecorder(ctrl),
 		ctx:    ctx,
 		cancel: cancel,
 	}
-	env.sub = &Subscriber{client: env.poller, stats: env.stats}
+	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats)
 	return env
 }
 
@@ -174,22 +178,21 @@ func TestRun_EmptyPartitionsWithinAPollAreHarmless(t *testing.T) {
 	require.NoError(t, env.sub.Run(env.ctx))
 }
 
-func TestHandleBatch_SkipsBadRecordAndCountsTheRest(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	stats := NewMockrecorder(ctrl)
-	s := &Subscriber{stats: stats}
-
+func TestRun_SkipsBadRecordAndStillCommitsThePoll(t *testing.T) {
 	batch := makeRecords(0, 0, 3)
 	batch[1].Value = []byte(`{not json`)
 
-	// Exactly 2 of the 3 records may reach the recorder.
-	stats.EXPECT().Record(gomock.Any()).Times(2)
+	env := newTestEnv(t)
+	env.expectPolls(fetchOf(partOf(0, batch)))
 
-	require.NoError(t, s.handleBatch(context.Background(), batch),
-		"a record that can never be decoded must not fail its batch")
+	// Exactly 2 of the 3 records may reach the recorder. The commit still happens:
+	// a record that can never be decoded must not hold up its partition.
+	env.stats.EXPECT().Record(gomock.Any()).Times(2)
+	env.poller.EXPECT().CommitRecords(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+	env.poller.EXPECT().AllowRebalance().Times(1)
+
+	require.NoError(t, env.sub.Run(env.ctx))
 }
-
-// --- graceful termination ----------------------------------------------------
 
 func TestRun_ReturnsNilOnShutdown(t *testing.T) {
 	env := newTestEnv(t)
@@ -197,21 +200,24 @@ func TestRun_ReturnsNilOnShutdown(t *testing.T) {
 	require.NoError(t, env.sub.Run(env.ctx))
 }
 
-func TestHandleBatch_StopsOnCancelledContext(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	stats := NewMockrecorder(ctrl) // no Record expectation: nothing may be counted
-	s := &Subscriber{stats: stats}
+func TestRun_ShutdownMidBatchCommitsNothing(t *testing.T) {
+	env := newTestEnv(t)
+	env.expectPolls(fetchOf(partOf(0, makeRecords(0, 0, 3))))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	// Cancelling from inside Record is what puts the shutdown in the middle of the
+	// batch. No CommitRecords expectation: a commit here would acknowledge records
+	// whose batch never finished.
+	env.stats.EXPECT().Record(gomock.Any()).Times(3).
+		Do(func(events.WikiEvent) { env.cancel() })
+	env.poller.EXPECT().AllowRebalance().Times(1)
 
-	require.ErrorIs(t, s.handleBatch(ctx, makeRecords(0, 0, 3)), context.Canceled)
+	require.NoError(t, env.sub.Run(env.ctx))
 }
 
 func TestClose_AllowsRebalance(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	poller := NewMockrecordPoller(ctrl)
-	sub := &Subscriber{client: poller}
+	poller := NewMockRecordPoller(ctrl)
+	sub := broker.NewSubscriberWithClient(poller, applog.Logger{}, NewMockRecorder(ctrl))
 
 	// Plain Close would hang after a poll that never allowed a rebalance.
 	poller.EXPECT().CloseAllowingRebalance().Times(1)
