@@ -66,8 +66,7 @@ func TestOpenStream_SendsNoLastEventIDOnTheFirstConnect(t *testing.T) {
 
 	stream, err := openStream(context.Background(), testConfig(), client, "")
 	require.NoError(t, err)
-	defer stream.Close()
-
+	_ = stream.Close()
 	// Absent, not empty: "Last-Event-ID: " would ask the server to resume from
 	// position "", which is not the same as "start wherever you like".
 	require.Empty(t, got.Values("Last-Event-ID"), "the first connect has nothing to resume from")
@@ -87,8 +86,7 @@ func TestOpenStream_SendsTheLastEventIDOnAResume(t *testing.T) {
 
 	stream, err := openStream(context.Background(), testConfig(), client, firstEventID)
 	require.NoError(t, err)
-	defer stream.Close()
-
+	_ = stream.Close()
 	require.Equal(t, firstEventID, got)
 }
 
