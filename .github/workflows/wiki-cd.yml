@@ -31,20 +31,6 @@ jobs:
           # by the time this workflow starts.
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
-      - name: Resolve chapter directory
-        id: resolve
-        # This workflow only ever publishes main, which is not a chapter branch,
-        # so the chapter is the highest-numbered ch-* directory in the tree — the
-        # newest chapter merged. Mirrors the resolveChapter job in wiki-ci.yml.
-        run: |
-          chapter=$(ls -d ch-*/ 2>/dev/null | tr -d '/' | sort -V | tail -1)
-          if [[ -z "$chapter" || ! -f "$chapter/Dockerfile" ]]; then
-            echo "::error::no publishable chapter resolved (got '$chapter')"
-            exit 1
-          fi
-          echo "chapter=$chapter" >> "$GITHUB_OUTPUT"
-          echo "Publishing \`$chapter\`" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Set up Docker Buildx
         # No QEMU step — see the note in wiki-ci.yml's dockerBuild job: the
         # Dockerfile cross-compiles, so no stage runs on a foreign architecture.
@@ -62,20 +48,17 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/wiki-recent-go
-          # The chapter tag keeps every published chapter addressable after the
-          # `main` tag has moved on to a later one.
           tags: |
             type=raw,value=main
-            type=raw,value=${{ steps.resolve.outputs.chapter }}
             type=sha,prefix=sha-,value=${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Build and push image
         uses: docker/build-push-action@v7
         with:
           # The Dockerfile copies go.mod/go.sum from the build context, so the
-          # context must be the chapter directory rather than the repo root.
-          context: ${{ steps.resolve.outputs.chapter }}
-          file: ${{ steps.resolve.outputs.chapter }}/Dockerfile
+          # context must be the module directory rather than the repo root.
+          context: wikirecent
+          file: wikirecent/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}

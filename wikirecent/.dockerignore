@@ -1,0 +1,33 @@
+# Version control
+.git
+.gitignore
+
+# Secrets & local env — never bake into an image
+.env
+.env.*
+!.env.example
+
+# Editor / IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Docs (don't affect the build)
+*.md
+
+# Docker files themselves (not needed inside the build context)
+Dockerfile
+docker-compose.yaml
+.dockerignore
+
+# Local build artifacts / test output
+*.test
+*.out
+/app
+/wiki-producer
+/wiki-consumer
+/producer
+/consumer
+/wiki
+/docker-wiki

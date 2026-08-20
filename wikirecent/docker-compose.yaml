@@ -1,0 +1,134 @@
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: wikistats-go:latest
+  env_file:
+    - .env
+  restart: unless-stopped
+
+services:
+  cassandra:
+    image: cassandra:5.0.8
+    container_name: cassandra
+    environment:
+      CASSANDRA_CLUSTER_NAME: wikistream
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 100M
+    ports:
+      - "${CASSANDRA_HOST_PORT:-9042}:9042"
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'SELECT bootstrapped FROM system.local' | grep -q COMPLETED"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  # No container_name on any of the services below. 
+  # Reach them by service name: `docker compose exec redpanda rpk cluster info`.
+  redpanda:
+    image: redpandadata/redpanda:v25.1.7
+    command:
+      - redpanda
+      - start
+      - --mode dev-container
+      - --smp 1
+      - --default-log-level=info
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"
+      - "9644:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  console:
+    image: redpandadata/console:v3.10.0
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Run-once container that creates the topic before either service starts.
+  # Explicit creation, not auto-create: the topic settings should be visible here
+  # rather than inherited from cluster defaults that may change.
+  redpanda-init:
+    image: redpandadata/redpanda:v25.1.7
+    entrypoint: ["/bin/sh", "-c"]
+    # -r 1: replication factor is per PARTITION, not per topic, so -p 3 -r 1
+    # -r 3 would be introduced in ch-8
+    # retention.ms=86400000 is 24h. The default is 7 days, which is a lot for the workshop.
+    command:
+      - >-
+        rpk topic create ${REDPANDA_TOPIC:-wiki.recentchange}
+        -p 3 -r 1 --topic-config retention.ms=86400000
+        --brokers redpanda:9092 || true
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    restart: "no"
+
+  producer:
+    <<: *app
+    command: ["/app/wiki-producer"]
+    environment:
+      REDPANDA_BROKERS: "redpanda:9092"
+    depends_on:
+      # Waits for the topic, not just for the broker. Publisher.Connect only
+      # pings, so a missing topic would not fail at startup.
+      redpanda-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      # cmd/producer serves exactly one route, GET /liveness, for this line.
+      # Same call as the consumer: /bin/busybox wget, since scratch has no wget.
+      test: ["CMD", "/bin/busybox", "wget", "-q", "--spider", "-T", "3", "http://127.0.0.1:${PRODUCER_PORT:-7002}/liveness"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  consumer:
+    <<: *app
+    command: ["/app/wiki-consumer"]
+    environment:
+      REDPANDA_BROKERS: "redpanda:9092"
+      CASSANDRA_HOSTS: cassandra
+      DB_BACKEND: ${DB_BACKEND:-cassandra}
+    depends_on:
+      cassandra:
+        # Neither binary retries its first connection, so the app must not start
+        # before the node answers queries.
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+    ports:
+      - "${CONSUMER_PORT:-7001}:${CONSUMER_PORT:-7001}"
+    restart: unless-stopped
+    # Must exceed cmd/consumer's shutdownTimeout of 15s. 
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "/bin/busybox", "wget", "-q", "--spider", "-T", "3", "http://127.0.0.1:${CONSUMER_PORT:-7001}/status"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  cassandra-data:
+  # to keep it separate from container writable layer
+  redpanda-data:
