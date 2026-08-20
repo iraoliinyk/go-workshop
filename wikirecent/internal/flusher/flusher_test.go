@@ -49,17 +49,21 @@ func (s *fakeSink) SaveSnapshot(ctx context.Context, at time.Time, snap statsmod
 func newTestFlusher(t *testing.T, s flusher.Snapshotter, sink flusher.Sink) (*flusher.Flusher, chan time.Time, chan struct{}) {
 	t.Helper()
 
-	// require, not assert: if New fails there is no Flusher to work with, and
-	// the test would panic on a nil pointer instead of showing this error.
-	f, err := flusher.New(s, sink, flusher.Config{Interval: time.Hour})
-	require.NoError(t, err, "New must accept a valid test config")
-
 	tick := make(chan time.Time)
 	stopped := make(chan struct{})
-	f.NewTicker = func(time.Duration) (<-chan time.Time, func()) {
-		return tick, func() { close(stopped) }
-	}
-	f.Logf = func(error, string, ...any) {} // keep the test output clean
+
+	// The seams go in through Config, so the Flusher is finished the moment New
+	// returns and nothing can swap its clock while Run is using it.
+	// require, not assert: if New fails there is no Flusher to work with, and
+	// the test would panic on a nil pointer instead of showing this error.
+	f, err := flusher.New(s, sink, flusher.Config{
+		Interval: time.Hour,
+		NewTicker: func(time.Duration) (<-chan time.Time, func()) {
+			return tick, func() { close(stopped) }
+		},
+		Logf: func(error, string, ...any) {}, // keep the test output clean
+	})
+	require.NoError(t, err, "New must accept a valid test config")
 
 	return f, tick, stopped
 }

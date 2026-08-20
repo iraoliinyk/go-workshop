@@ -28,6 +28,9 @@ func testConfig() wikistream.Config {
 		URL:       "http://stream.test/v2/stream/recentchange",
 		UserAgent: "wikirecent-test",
 		Accept:    "text/event-stream",
+		// The reconnect tests would otherwise wait a second per retry. It is per
+		// Config, so setting it here cannot affect any other test.
+		BaseBackoff: time.Millisecond,
 	}
 }
 
@@ -39,15 +42,6 @@ func discardLogger(t *testing.T) applog.Logger {
 	return log
 }
 
-// fastBackoff shrinks the retry delay for the reconnect tests, so they cost
-// milliseconds instead of a second per retry.
-func fastBackoff(t *testing.T) {
-	t.Helper()
-	old := wikistream.BaseBackoff
-	wikistream.BaseBackoff = time.Millisecond
-	t.Cleanup(func() { wikistream.BaseBackoff = old })
-}
-
 func okResponse(body string) *http.Response {
 	return &http.Response{
 		StatusCode: http.StatusOK,
@@ -57,7 +51,7 @@ func okResponse(body string) *http.Response {
 
 func TestOpenStream_SendsNoLastEventIDOnTheFirstConnect(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	client := NewMockdoer(ctrl)
+	client := NewMockDoer(ctrl)
 
 	var got http.Header
 	client.EXPECT().Do(gomock.Any()).DoAndReturn(func(req *http.Request) (*http.Response, error) {
@@ -77,7 +71,7 @@ func TestOpenStream_SendsNoLastEventIDOnTheFirstConnect(t *testing.T) {
 
 func TestOpenStream_SendsTheLastEventIDOnAResume(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	client := NewMockdoer(ctrl)
+	client := NewMockDoer(ctrl)
 
 	var got string
 	client.EXPECT().Do(gomock.Any()).DoAndReturn(func(req *http.Request) (*http.Response, error) {
@@ -131,9 +125,8 @@ func TestReadStream_ReturnsTheIDItSawWhenPublishFails(t *testing.T) {
 }
 
 func TestStart_ResumesFromTheLastEventIDAfterAReconnect(t *testing.T) {
-	fastBackoff(t)
 	ctrl := gomock.NewController(t)
-	client := NewMockdoer(ctrl)
+	client := NewMockDoer(ctrl)
 	sink := NewMockSink(ctrl)
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -162,9 +155,8 @@ func TestStart_ResumesFromTheLastEventIDAfterAReconnect(t *testing.T) {
 }
 
 func TestStart_KeepsTheLastEventIDWhenAReconnectIsRejected(t *testing.T) {
-	fastBackoff(t)
 	ctrl := gomock.NewController(t)
-	client := NewMockdoer(ctrl)
+	client := NewMockDoer(ctrl)
 	sink := NewMockSink(ctrl)
 	ctx, cancel := context.WithCancel(context.Background())
 

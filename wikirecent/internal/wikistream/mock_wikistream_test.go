@@ -17,32 +17,32 @@ import (
 	gomock "go.uber.org/mock/gomock"
 )
 
-// Mockdoer is a mock of doer interface.
-type Mockdoer struct {
+// MockDoer is a mock of Doer interface.
+type MockDoer struct {
 	ctrl     *gomock.Controller
-	recorder *MockdoerMockRecorder
+	recorder *MockDoerMockRecorder
 	isgomock struct{}
 }
 
-// MockdoerMockRecorder is the mock recorder for Mockdoer.
-type MockdoerMockRecorder struct {
-	mock *Mockdoer
+// MockDoerMockRecorder is the mock recorder for MockDoer.
+type MockDoerMockRecorder struct {
+	mock *MockDoer
 }
 
-// NewMockdoer creates a new mock instance.
-func NewMockdoer(ctrl *gomock.Controller) *Mockdoer {
-	mock := &Mockdoer{ctrl: ctrl}
-	mock.recorder = &MockdoerMockRecorder{mock}
+// NewMockDoer creates a new mock instance.
+func NewMockDoer(ctrl *gomock.Controller) *MockDoer {
+	mock := &MockDoer{ctrl: ctrl}
+	mock.recorder = &MockDoerMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *Mockdoer) EXPECT() *MockdoerMockRecorder {
+func (m *MockDoer) EXPECT() *MockDoerMockRecorder {
 	return m.recorder
 }
 
 // Do mocks base method.
-func (m *Mockdoer) Do(req *http.Request) (*http.Response, error) {
+func (m *MockDoer) Do(req *http.Request) (*http.Response, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Do", req)
 	ret0, _ := ret[0].(*http.Response)
@@ -51,31 +51,31 @@ func (m *Mockdoer) Do(req *http.Request) (*http.Response, error) {
 }
 
 // Do indicates an expected call of Do.
-func (mr *MockdoerMockRecorder) Do(req any) *MockdoerDoCall {
+func (mr *MockDoerMockRecorder) Do(req any) *MockDoerDoCall {
 	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Do", reflect.TypeOf((*Mockdoer)(nil).Do), req)
-	return &MockdoerDoCall{Call: call}
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Do", reflect.TypeOf((*MockDoer)(nil).Do), req)
+	return &MockDoerDoCall{Call: call}
 }
 
-// MockdoerDoCall wrap *gomock.Call
-type MockdoerDoCall struct {
+// MockDoerDoCall wrap *gomock.Call
+type MockDoerDoCall struct {
 	*gomock.Call
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockdoerDoCall) Return(arg0 *http.Response, arg1 error) *MockdoerDoCall {
+func (c *MockDoerDoCall) Return(arg0 *http.Response, arg1 error) *MockDoerDoCall {
 	c.Call = c.Call.Return(arg0, arg1)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockdoerDoCall) Do(f func(*http.Request) (*http.Response, error)) *MockdoerDoCall {
+func (c *MockDoerDoCall) Do(f func(*http.Request) (*http.Response, error)) *MockDoerDoCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockdoerDoCall) DoAndReturn(f func(*http.Request) (*http.Response, error)) *MockdoerDoCall {
+func (c *MockDoerDoCall) DoAndReturn(f func(*http.Request) (*http.Response, error)) *MockDoerDoCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

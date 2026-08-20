@@ -24,17 +24,20 @@ type Config struct {
 	Interval      time.Duration // how often we save a snapshot
 	ShutdownGrace time.Duration // the maximum time the last save may take
 	Log           applog.Logger // zero value is PROD, which still reports a failed flush
+
+	// Logf takes the error as well as the message, so the apperrors code lands
+	// as an attribute instead of being pasted into the text.
+	Logf      func(err error, format string, args ...any)
+	NewTicker func(time.Duration) (<-chan time.Time, func())
+	Now       func() time.Time
 }
 
 type Flusher struct {
-	stats Snapshotter
-	sink  Sink
-	cfg   Config
-	// logf takes the error as well as the message, so the apperrors code lands
-	// as an attribute instead of being pasted into the text.
-	Logf func(err error, format string, args ...any)
-
-	NewTicker func(time.Duration) (<-chan time.Time, func())
+	stats     Snapshotter
+	sink      Sink
+	cfg       Config
+	logf      func(err error, format string, args ...any)
+	newTicker func(time.Duration) (<-chan time.Time, func())
 	now       func() time.Time
 }
 
@@ -45,16 +48,26 @@ func New(s Snapshotter, sink Sink, cfg Config) (*Flusher, error) {
 	if cfg.ShutdownGrace <= 0 {
 		cfg.ShutdownGrace = 5 * time.Second
 	}
-	return &Flusher{
-		// logf stays a plain function so a test can swap it. It is AppErrorf, not
-		// Debugf, because nobody watches a request while this loop runs, so a
-		// dropped snapshot must be visible in PROD too.
-		stats: s, sink: sink, cfg: cfg, Logf: cfg.Log.AppErrorf,
-		NewTicker: func(d time.Duration) (<-chan time.Time, func()) {
+	// The default logger is AppErrorf, not Debugf, because nobody watches a request
+	// while this loop runs, so a dropped snapshot must be visible in PROD too.
+	if cfg.Logf == nil {
+		cfg.Logf = cfg.Log.AppErrorf
+	}
+	if cfg.NewTicker == nil {
+		cfg.NewTicker = func(d time.Duration) (<-chan time.Time, func()) {
 			t := time.NewTicker(d)
 			return t.C, t.Stop
-		},
-		now: func() time.Time { return time.Now().UTC() },
+		}
+	}
+	if cfg.Now == nil {
+		cfg.Now = func() time.Time { return time.Now().UTC() }
+	}
+
+	return &Flusher{
+		stats: s, sink: sink, cfg: cfg,
+		logf:      cfg.Logf,
+		newTicker: cfg.NewTicker,
+		now:       cfg.Now,
 	}, nil
 }
 
@@ -63,7 +76,7 @@ func New(s Snapshotter, sink Sink, cfg Config) (*Flusher, error) {
 // last save is returned, because that one closes the series.
 // Redpanda Connect candidate for ch-10.
 func (f *Flusher) Run(ctx context.Context) error {
-	tick, stop := f.NewTicker(f.cfg.Interval)
+	tick, stop := f.newTicker(f.cfg.Interval)
 	defer stop()
 
 	for {
@@ -82,7 +95,7 @@ func (f *Flusher) Run(ctx context.Context) error {
 				// SaveSnapshot returns *apperrors.RepositoryError; passing err
 				// itself lets logf attach the code. logf is the only sink here,
 				// so a test can still silence it.
-				f.Logf(err, "stats flush: %v", err)
+				f.logf(err, "stats flush: %v", err)
 			}
 		}
 	}

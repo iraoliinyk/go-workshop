@@ -14,9 +14,9 @@ import (
 	"wikirecent/internal/applog"
 )
 
-// doer is the part of *http.Client this package needs, so a test can inject its own
-// instead of http.DefaultClient.
-type doer interface {
+// Doer is the part of *http.Client this package needs, so a caller can inject its own
+// instead of http.DefaultClient. It is exported because Start and OpenStream take it.
+type Doer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
@@ -34,6 +34,10 @@ type Config struct {
 	URL       string
 	UserAgent string
 	Accept    string
+	// BaseBackoff is the first retry delay; it doubles up to one minute and resets
+	// after a good connect. Zero means defaultBaseBackoff. It lives here, and not in
+	// a package-level var, so one caller's retry policy cannot change another's.
+	BaseBackoff time.Duration
 }
 
 // Wikimedia's recentchange event sample:
@@ -45,13 +49,19 @@ var (
 	dataTag = []byte("data:")
 )
 
-var BaseBackoff = time.Second
+const defaultBaseBackoff = time.Second
 
 // Start reads the Wikimedia stream until ctx is cancelled, publishing every payload
 // to sink. It reconnects on failure instead of returning, so a dropped upstream
 // connection costs a retry rather than the process.
-func Start(ctx context.Context, cfg Config, client doer, sink Sink, log applog.Logger) error {
-	backoff := BaseBackoff
+func Start(ctx context.Context, cfg Config, client Doer, sink Sink, log applog.Logger) error {
+	// Resolved once: every later reset must use the same value.
+	base := cfg.BaseBackoff
+	if base <= 0 {
+		base = defaultBaseBackoff
+	}
+
+	backoff := base
 	var lastEventID = ""
 
 	for {
@@ -61,7 +71,7 @@ func Start(ctx context.Context, cfg Config, client doer, sink Sink, log applog.L
 
 		stream, err := OpenStream(ctx, cfg, client, lastEventID) // sets Last-Event-ID when we have one
 		if err == nil {
-			backoff = BaseBackoff // a good connect earns a fresh budget
+			backoff = base // a good connect earns a fresh budget
 			lastEventID, err = ReadStream(ctx, stream, sink, lastEventID)
 			_ = stream.Close() // close error is not actionable: the read already failed
 		}
@@ -80,7 +90,7 @@ func Start(ctx context.Context, cfg Config, client doer, sink Sink, log applog.L
 	}
 }
 
-func OpenStream(ctx context.Context, cfg Config, client doer, lastEventID string) (io.ReadCloser, error) {
+func OpenStream(ctx context.Context, cfg Config, client Doer, lastEventID string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.URL, nil)
 	if err != nil {
 		return nil, &apperrors.ConnectionError{Err: fmt.Errorf("build request: %w", err)}
