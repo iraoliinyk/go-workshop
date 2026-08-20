@@ -1,4 +1,4 @@
-package flusher
+package flusher_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"wikirecent/internal/flusher"
 	"wikirecent/internal/stats/statsmodels"
 
 	"github.com/stretchr/testify/assert"
@@ -45,20 +46,20 @@ func (s *fakeSink) SaveSnapshot(ctx context.Context, at time.Time, snap statsmod
 // newTestFlusher builds a Flusher whose clock the test owns: sending a value into the
 // returned tick channel makes it save once. The stopped channel is closed when the
 // flusher stops its ticker.
-func newTestFlusher(t *testing.T, s Snapshotter, sink Sink) (*Flusher, chan time.Time, chan struct{}) {
+func newTestFlusher(t *testing.T, s flusher.Snapshotter, sink flusher.Sink) (*flusher.Flusher, chan time.Time, chan struct{}) {
 	t.Helper()
 
 	// require, not assert: if New fails there is no Flusher to work with, and
 	// the test would panic on a nil pointer instead of showing this error.
-	f, err := New(s, sink, Config{Interval: time.Hour})
+	f, err := flusher.New(s, sink, flusher.Config{Interval: time.Hour})
 	require.NoError(t, err, "New must accept a valid test config")
 
 	tick := make(chan time.Time)
 	stopped := make(chan struct{})
-	f.newTicker = func(time.Duration) (<-chan time.Time, func()) {
+	f.NewTicker = func(time.Duration) (<-chan time.Time, func()) {
 		return tick, func() { close(stopped) }
 	}
-	f.logf = func(error, string, ...any) {} // keep the test output clean
+	f.Logf = func(error, string, ...any) {} // keep the test output clean
 
 	return f, tick, stopped
 }
@@ -89,7 +90,7 @@ func (f fakeStats) Snapshot() statsmodels.Snapshot { return f.snap }
 // runFlusher starts f.Run in its own goroutine. It returns a function that
 // cancels the context and waits for Run to finish, so every test can stop the
 // flusher in one line and read the error it returned.
-func runFlusher(t *testing.T, f *Flusher) (stop func() error) {
+func runFlusher(t *testing.T, f *flusher.Flusher) (stop func() error) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
