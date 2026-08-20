@@ -20,7 +20,7 @@ type doer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-//go:generate go tool mockgen -source=wikistream.go -destination=mock_wikistream_test.go -package=wikistream -typed
+//go:generate go tool mockgen -source=wikistream.go -destination=mock_wikistream_test.go -package=wikistream_test -typed
 
 // Sink receives one raw SSE payload. It may fail, unlike the old recorder, because
 // a broker can refuse a write in ways an in-memory counter never could.
@@ -45,13 +45,13 @@ var (
 	dataTag = []byte("data:")
 )
 
-var baseBackoff = time.Second
+var BaseBackoff = time.Second
 
 // Start reads the Wikimedia stream until ctx is cancelled, publishing every payload
 // to sink. It reconnects on failure instead of returning, so a dropped upstream
 // connection costs a retry rather than the process.
 func Start(ctx context.Context, cfg Config, client doer, sink Sink, log applog.Logger) error {
-	backoff := baseBackoff
+	backoff := BaseBackoff
 	var lastEventID = ""
 
 	for {
@@ -59,10 +59,10 @@ func Start(ctx context.Context, cfg Config, client doer, sink Sink, log applog.L
 			return ctx.Err()
 		}
 
-		stream, err := openStream(ctx, cfg, client, lastEventID) // sets Last-Event-ID when we have one
+		stream, err := OpenStream(ctx, cfg, client, lastEventID) // sets Last-Event-ID when we have one
 		if err == nil {
-			backoff = baseBackoff // a good connect earns a fresh budget
-			lastEventID, err = readStream(ctx, stream, sink, lastEventID)
+			backoff = BaseBackoff // a good connect earns a fresh budget
+			lastEventID, err = ReadStream(ctx, stream, sink, lastEventID)
 			_ = stream.Close() // close error is not actionable: the read already failed
 		}
 
@@ -80,7 +80,7 @@ func Start(ctx context.Context, cfg Config, client doer, sink Sink, log applog.L
 	}
 }
 
-func openStream(ctx context.Context, cfg Config, client doer, lastEventID string) (io.ReadCloser, error) {
+func OpenStream(ctx context.Context, cfg Config, client doer, lastEventID string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.URL, nil)
 	if err != nil {
 		return nil, &apperrors.ConnectionError{Err: fmt.Errorf("build request: %w", err)}
@@ -93,7 +93,7 @@ func openStream(ctx context.Context, cfg Config, client doer, lastEventID string
 		req.Header.Set("Last-Event-ID", lastEventID)
 	}
 
-	// The caller closes the body on success. openStream owns it only on its failure
+	// The caller closes the body on success. OpenStream owns it only on its failure
 	// paths, so do not add a defer here: it would close the body being returned.
 	resp, err := client.Do(req)
 	if err != nil {
@@ -111,10 +111,13 @@ func openStream(ctx context.Context, cfg Config, client doer, lastEventID string
 	return resp.Body, nil
 }
 
-// readStream consumes one connection until it fails, publishing each payload. It
+// ReadStream consumes one connection until it fails, publishing each payload. It
 // returns the most recent event id so the caller can resume from it, on the error
 // path as well as the clean one.
-func readStream(ctx context.Context, stream io.Reader, sink Sink, lastEventID string) (string, error) {
+//
+// It is exported as the pair of OpenStream: one opens a connection, one drains it.
+// Both take only exported types, so a caller can drive either half on its own.
+func ReadStream(ctx context.Context, stream io.Reader, sink Sink, lastEventID string) (string, error) {
 	const readBufferSize = 64 << 10 //64 KiB
 	reader := bufio.NewReaderSize(stream, readBufferSize)
 	for {

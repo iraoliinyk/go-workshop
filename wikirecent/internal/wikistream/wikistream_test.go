@@ -1,4 +1,4 @@
-package wikistream
+package wikistream_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"wikirecent/internal/applog"
+	"wikirecent/internal/wikistream"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -22,8 +23,8 @@ const (
 	secondEventID = `[{"topic":"eqiad.mediawiki.recentchange","partition":0,"offset":5647232}]`
 )
 
-func testConfig() Config {
-	return Config{
+func testConfig() wikistream.Config {
+	return wikistream.Config{
 		URL:       "http://stream.test/v2/stream/recentchange",
 		UserAgent: "wikirecent-test",
 		Accept:    "text/event-stream",
@@ -42,9 +43,9 @@ func discardLogger(t *testing.T) applog.Logger {
 // milliseconds instead of a second per retry.
 func fastBackoff(t *testing.T) {
 	t.Helper()
-	old := baseBackoff
-	baseBackoff = time.Millisecond
-	t.Cleanup(func() { baseBackoff = old })
+	old := wikistream.BaseBackoff
+	wikistream.BaseBackoff = time.Millisecond
+	t.Cleanup(func() { wikistream.BaseBackoff = old })
 }
 
 func okResponse(body string) *http.Response {
@@ -64,7 +65,7 @@ func TestOpenStream_SendsNoLastEventIDOnTheFirstConnect(t *testing.T) {
 		return okResponse(""), nil
 	})
 
-	stream, err := openStream(context.Background(), testConfig(), client, "")
+	stream, err := wikistream.OpenStream(context.Background(), testConfig(), client, "")
 	require.NoError(t, err)
 	_ = stream.Close()
 	// Absent, not empty: "Last-Event-ID: " would ask the server to resume from
@@ -84,7 +85,7 @@ func TestOpenStream_SendsTheLastEventIDOnAResume(t *testing.T) {
 		return okResponse(""), nil
 	})
 
-	stream, err := openStream(context.Background(), testConfig(), client, firstEventID)
+	stream, err := wikistream.OpenStream(context.Background(), testConfig(), client, firstEventID)
 	require.NoError(t, err)
 	_ = stream.Close()
 	require.Equal(t, firstEventID, got)
@@ -108,7 +109,7 @@ func TestReadStream_ReturnsTheIDOfTheLastEventItRead(t *testing.T) {
 		sink.EXPECT().Publish(gomock.Any(), []byte(`{"user":"Bot"}`)).Return(nil),
 	)
 
-	got, err := readStream(context.Background(), strings.NewReader(body), sink, "")
+	got, err := wikistream.ReadStream(context.Background(), strings.NewReader(body), sink, "")
 
 	require.ErrorIs(t, err, io.EOF, "the stream ended, so the read must report it")
 	require.Equal(t, secondEventID, got, "want the newest id, not the first one seen")
@@ -123,7 +124,7 @@ func TestReadStream_ReturnsTheIDItSawWhenPublishFails(t *testing.T) {
 
 	body := "id: " + firstEventID + "\n" + `data: {"user":"Iryna"}` + "\n"
 
-	got, err := readStream(context.Background(), strings.NewReader(body), sink, "")
+	got, err := wikistream.ReadStream(context.Background(), strings.NewReader(body), sink, "")
 
 	require.ErrorIs(t, err, brokerErr)
 	require.Equal(t, firstEventID, got)
@@ -153,7 +154,7 @@ func TestStart_ResumesFromTheLastEventIDAfterAReconnect(t *testing.T) {
 		}),
 	)
 
-	err := Start(ctx, testConfig(), client, sink, discardLogger(t))
+	err := wikistream.Start(ctx, testConfig(), client, sink, discardLogger(t))
 
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, []string{"", firstEventID}, sent,
@@ -177,7 +178,7 @@ func TestStart_KeepsTheLastEventIDWhenAReconnectIsRejected(t *testing.T) {
 			record(req)
 			return okResponse("id: " + firstEventID + "\n" + `data: {"user":"Iryna"}` + "\n"), nil
 		}),
-		// A rejected connect never reaches readStream, so it must not touch the id.
+		// A rejected connect never reaches ReadStream, so it must not touch the id.
 		client.EXPECT().Do(gomock.Any()).DoAndReturn(func(req *http.Request) (*http.Response, error) {
 			record(req)
 			return &http.Response{
@@ -192,7 +193,7 @@ func TestStart_KeepsTheLastEventIDWhenAReconnectIsRejected(t *testing.T) {
 		}),
 	)
 
-	err := Start(ctx, testConfig(), client, sink, discardLogger(t))
+	err := wikistream.Start(ctx, testConfig(), client, sink, discardLogger(t))
 
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, []string{"", firstEventID, firstEventID}, sent,
