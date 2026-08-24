@@ -5,6 +5,8 @@ import (
 	"wikirecent/internal/applog"
 )
 
+//go:generate go tool mockgen -source=sink.go -destination=mock_sink_test.go -package=codec_test -typed
+
 type Sink interface {
 	Publish(ctx context.Context, payload []byte) error
 }

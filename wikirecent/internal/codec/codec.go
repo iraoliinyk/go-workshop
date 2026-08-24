@@ -45,8 +45,6 @@ func ToDomain(e *wikiv1.WikiEvent) events.WikiEvent {
 
 type EventDecoder struct{}
 
-func NewEventDecoder() EventDecoder { return EventDecoder{} }
-
 func (EventDecoder) Decode(value []byte) (events.WikiEvent, error) {
 	event, err := Decode(value)
 	if err != nil {

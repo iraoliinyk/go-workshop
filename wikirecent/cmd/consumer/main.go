@@ -76,13 +76,11 @@ func main() {
 		}
 	}()
 
-	decoder := codec.NewEventDecoder()
-
 	sub, err := broker.NewSubscriber(broker.SubscriberConfig{
 		Brokers: cfg.Brokers,
 		Topic:   cfg.Topic,
 		Group:   cfg.Group,
-	}, logger, liveStats, decoder)
+	}, logger, liveStats, codec.EventDecoder{})
 	if err != nil {
 		log.Fatalf("broker: %v", err)
 	}
