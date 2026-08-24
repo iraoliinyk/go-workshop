@@ -25,6 +25,7 @@ type testEnv struct {
 	stats  *MockRecorder
 	ctx    context.Context
 	cancel context.CancelFunc
+	dec    *MockDecoder
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -39,8 +40,9 @@ func newTestEnv(t *testing.T) *testEnv {
 		stats:  NewMockRecorder(ctrl),
 		ctx:    ctx,
 		cancel: cancel,
+		dec:    NewMockDecoder(ctrl),
 	}
-	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats)
+	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats, env.dec)
 	return env
 }
 
@@ -56,6 +58,12 @@ func (env *testEnv) expectPolls(fetches ...kgo.Fetches) {
 			env.cancel()
 			return nil
 		}).AnyTimes()
+}
+
+func (env *testEnv) expectDecodes(n int) {
+	env.dec.EXPECT().Decode(gomock.Any()).
+		Return(events.WikiEvent{User: "iryna", ServerURL: "https://ca.wikipedia.org"}, nil).
+		Times(n)
 }
 
 // The topic has 3 partitions. Fixtures name a partition explicitly, because the
@@ -104,6 +112,7 @@ func TestRun_CommitsOnceWithEveryRecordOfThePoll(t *testing.T) {
 		}).Times(1)
 	env.poller.EXPECT().AllowRebalance().Times(1)
 	env.stats.EXPECT().Record(gomock.Any()).Times(5)
+	env.expectDecodes(5)
 
 	require.NoError(t, env.sub.Run(env.ctx))
 
@@ -132,6 +141,7 @@ func TestRun_CommitFailureIsLoggedAndTheLoopContinues(t *testing.T) {
 		Return(errors.New("commit boom")).Times(2)
 	env.poller.EXPECT().AllowRebalance().Times(2)
 	env.stats.EXPECT().Record(gomock.Any()).Times(4)
+	env.expectDecodes(4)
 
 	require.NoError(t, env.sub.Run(env.ctx))
 }
@@ -172,6 +182,7 @@ func TestRun_EmptyPartitionsWithinAPollAreHarmless(t *testing.T) {
 	))
 
 	env.stats.EXPECT().Record(gomock.Any()).Times(2)
+	env.expectDecodes(2)
 	env.poller.EXPECT().CommitRecords(gomock.Any(), gomock.Any()).Return(nil).Times(1)
 	env.poller.EXPECT().AllowRebalance().Times(1)
 
@@ -179,14 +190,20 @@ func TestRun_EmptyPartitionsWithinAPollAreHarmless(t *testing.T) {
 }
 
 func TestRun_SkipsBadRecordAndStillCommitsThePoll(t *testing.T) {
+	bad := []byte(`{not json`)
 	batch := makeRecords(0, 0, 3)
-	batch[1].Value = []byte(`{not json`)
+	batch[1].Value = bad
 
 	env := newTestEnv(t)
 	env.expectPolls(fetchOf(partOf(0, batch)))
 
 	// Exactly 2 of the 3 records may reach the recorder. The commit still happens:
 	// a record that can never be decoded must not hold up its partition.
+	env.dec.EXPECT().Decode(bad).
+		Return(events.WikiEvent{}, errors.New("bad payload")).Times(1)
+	env.dec.EXPECT().Decode(gomock.Not(gomock.Eq(bad))).
+		Return(events.WikiEvent{User: "iryna", ServerURL: "https://ca.wikipedia.org"}, nil).Times(2)
+
 	env.stats.EXPECT().Record(gomock.Any()).Times(2)
 	env.poller.EXPECT().CommitRecords(gomock.Any(), gomock.Any()).Return(nil).Times(1)
 	env.poller.EXPECT().AllowRebalance().Times(1)
@@ -207,6 +224,7 @@ func TestRun_ShutdownMidBatchCommitsNothing(t *testing.T) {
 	// Cancelling from inside Record is what puts the shutdown in the middle of the
 	// batch. No CommitRecords expectation: a commit here would acknowledge records
 	// whose batch never finished.
+	env.expectDecodes(3)
 	env.stats.EXPECT().Record(gomock.Any()).Times(3).
 		Do(func(events.WikiEvent) { env.cancel() })
 	env.poller.EXPECT().AllowRebalance().Times(1)
@@ -217,7 +235,8 @@ func TestRun_ShutdownMidBatchCommitsNothing(t *testing.T) {
 func TestClose_AllowsRebalance(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	poller := NewMockRecordPoller(ctrl)
-	sub := broker.NewSubscriberWithClient(poller, applog.Logger{}, NewMockRecorder(ctrl))
+	dec := NewMockDecoder(ctrl)
+	sub := broker.NewSubscriberWithClient(poller, applog.Logger{}, NewMockRecorder(ctrl), dec)
 
 	// Plain Close would hang after a poll that never allowed a rebalance.
 	poller.EXPECT().CloseAllowingRebalance().Times(1)

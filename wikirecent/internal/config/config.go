@@ -11,14 +11,16 @@ import (
 type Common struct {
 	Logger  string   `env:"LOGGER"           envDefault:"DEBUG"` // DEBUG | PROD
 	Brokers []string `env:"REDPANDA_BROKERS" envSeparator:"," envDefault:"127.0.0.1:9092"`
-	Topic   string   `env:"REDPANDA_TOPIC"   envDefault:"wiki.recentchange"`
+	Topic   string   `env:"REDPANDA_TOPIC" envDefault:"wiki.recentchange.proto"`
 }
 type Producer struct {
 	Common
-	Port      int    `env:"PRODUCER_PORT" envDefault:"7002"`
-	URL       string `env:"WIKI_URL"        envDefault:"https://stream.wikimedia.org/v2/stream/recentchange"`
-	UserAgent string `env:"WIKI_USER_AGENT" envDefault:"wiki-stream-producer/1.0 (https://github.com/you/wiki-stream)"`
-	Accept    string `env:"WIKI_ACCEPT" envDefault:"text/event-stream"`
+	Port        int    `env:"PRODUCER_PORT" envDefault:"7002"`
+	URL         string `env:"WIKI_URL"        envDefault:"https://stream.wikimedia.org/v2/stream/recentchange"`
+	UserAgent   string `env:"WIKI_USER_AGENT" envDefault:"wiki-stream-producer/1.0 (https://github.com/you/wiki-stream)"`
+	Accept      string `env:"WIKI_ACCEPT" envDefault:"text/event-stream"`
+	ContentType string `env:"CONTENT_TYPE" envDefault:"application/x-protobuf"`
+	ProtoType   string `env:"PROTO_TYPE" envDefault:"wikirecent.v1.WikiEvent"`
 }
 
 type Consumer struct {

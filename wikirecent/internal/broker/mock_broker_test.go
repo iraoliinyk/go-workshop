@@ -178,6 +178,69 @@ func (c *MockRecorderRecordCall) DoAndReturn(f func(events.WikiEvent)) *MockReco
 	return c
 }
 
+// MockDecoder is a mock of Decoder interface.
+type MockDecoder struct {
+	ctrl     *gomock.Controller
+	recorder *MockDecoderMockRecorder
+	isgomock struct{}
+}
+
+// MockDecoderMockRecorder is the mock recorder for MockDecoder.
+type MockDecoderMockRecorder struct {
+	mock *MockDecoder
+}
+
+// NewMockDecoder creates a new mock instance.
+func NewMockDecoder(ctrl *gomock.Controller) *MockDecoder {
+	mock := &MockDecoder{ctrl: ctrl}
+	mock.recorder = &MockDecoderMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockDecoder) EXPECT() *MockDecoderMockRecorder {
+	return m.recorder
+}
+
+// Decode mocks base method.
+func (m *MockDecoder) Decode(value []byte) (events.WikiEvent, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Decode", value)
+	ret0, _ := ret[0].(events.WikiEvent)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Decode indicates an expected call of Decode.
+func (mr *MockDecoderMockRecorder) Decode(value any) *MockDecoderDecodeCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Decode", reflect.TypeOf((*MockDecoder)(nil).Decode), value)
+	return &MockDecoderDecodeCall{Call: call}
+}
+
+// MockDecoderDecodeCall wrap *gomock.Call
+type MockDecoderDecodeCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockDecoderDecodeCall) Return(arg0 events.WikiEvent, arg1 error) *MockDecoderDecodeCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockDecoderDecodeCall) Do(f func([]byte) (events.WikiEvent, error)) *MockDecoderDecodeCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockDecoderDecodeCall) DoAndReturn(f func([]byte) (events.WikiEvent, error)) *MockDecoderDecodeCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // MockRecordProducer is a mock of RecordProducer interface.
 type MockRecordProducer struct {
 	ctrl     *gomock.Controller

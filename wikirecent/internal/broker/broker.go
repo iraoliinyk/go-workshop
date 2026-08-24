@@ -24,6 +24,10 @@ type Recorder interface {
 	Record(event events.WikiEvent)
 }
 
+type Decoder interface {
+	Decode(value []byte) (events.WikiEvent, error)
+}
+
 type RecordProducer interface {
 	Produce(ctx context.Context, r *kgo.Record, promise func(*kgo.Record, error))
 	Ping(ctx context.Context) error

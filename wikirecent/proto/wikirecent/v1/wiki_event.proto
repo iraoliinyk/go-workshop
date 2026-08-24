@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package wikirecent.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "wikirecent/internal/genproto/wikirecent/v1;wikiv1";
+
+message WikiEvent {
+  string user = 1;
+  bool bot = 2;
+  string server_url = 3;
+  string type = 4;
+  string title = 5;
+  google.protobuf.Timestamp timestamp = 6;
+  int32 namespace = 7;
+  bool minor = 8;
+  optional bool patrolled = 9;
+  optional int64 id = 10;
+  string wiki = 11;
+  string comment = 12;
+  Meta meta = 13;
+  PageLength length = 14;
+  RevisionIds revision = 15;
+
+  string title_url = 16;
+  string parsedcomment = 17;
+  string server_name = 18;
+  string server_script_path = 19;
+  string notify_url = 20;
+  string schema = 21;
+  Log log = 22;
+}
+
+message Meta {
+  string uri = 1;
+  string request_id = 2;
+  string id = 3;
+  google.protobuf.Timestamp dt = 4;
+  string domain = 5;
+  string stream = 6;
+  string topic = 7;
+  int32 partition = 8;
+  int64 offset = 9;
+}
+
+message PageLength {
+  optional int64 old_bytes = 1;
+  optional int64 new_bytes = 2;
+}
+
+message RevisionIds {
+  optional int64 old_id = 1;
+  optional int64 new_id = 2;
+}
+
+message Log {
+  optional int64 id = 1;
+  string type = 2;
+  string action = 3;
+  string action_comment = 4;
+  string params_json = 5;
+}

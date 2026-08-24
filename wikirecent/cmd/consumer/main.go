@@ -12,6 +12,7 @@ import (
 	"wikirecent/internal/applog"
 	"wikirecent/internal/auth"
 	"wikirecent/internal/broker"
+	"wikirecent/internal/codec"
 	"wikirecent/internal/config"
 	"wikirecent/internal/db/cassandra"
 	"wikirecent/internal/flusher"
@@ -75,11 +76,13 @@ func main() {
 		}
 	}()
 
+	decoder := codec.NewEventDecoder()
+
 	sub, err := broker.NewSubscriber(broker.SubscriberConfig{
 		Brokers: cfg.Brokers,
 		Topic:   cfg.Topic,
 		Group:   cfg.Group,
-	}, logger, liveStats)
+	}, logger, liveStats, decoder)
 	if err != nil {
 		log.Fatalf("broker: %v", err)
 	}

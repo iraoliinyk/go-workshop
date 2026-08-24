@@ -10,8 +10,10 @@ import (
 
 // Config is the publisher's half of the broker settings.
 type PublisherConfig struct {
-	Brokers []string
-	Topic   string
+	Brokers     []string
+	Topic       string
+	ContentType string
+	ProtoType   string
 }
 
 type Publisher struct {
@@ -25,6 +27,7 @@ func NewPublisher(cfg PublisherConfig, log applog.Logger) (*Publisher, error) {
 		kgo.ClientID("wiki-producer"),
 		kgo.DefaultProduceTopic(cfg.Topic),
 		kgo.DefaultProduceTopicAlways(),
+		kgo.ProducerBatchCompression(kgo.ZstdCompression(), kgo.SnappyCompression()),
 	)
 	if err != nil {
 		return nil, &apperrors.PublishError{Err: err}
@@ -55,7 +58,7 @@ func (p *Publisher) Publish(ctx context.Context, payload []byte) error {
 	// Produce is async, so Publish returns before the record is accepted.
 	p.client.Produce(ctx, &kgo.Record{Value: payload}, func(_ *kgo.Record, err error) {
 		if err != nil && ctx.Err() == nil {
-			p.log.AppErrorf(err, "publish failed")
+			p.log.AppErrorf(err, "publish failed: %v", err)
 		}
 	})
 	return nil

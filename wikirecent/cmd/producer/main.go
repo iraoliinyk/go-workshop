@@ -12,6 +12,7 @@ import (
 
 	"wikirecent/internal/applog"
 	"wikirecent/internal/broker"
+	"wikirecent/internal/codec"
 	"wikirecent/internal/config"
 	"wikirecent/internal/lifecycle"
 	"wikirecent/internal/wikistream"
@@ -79,11 +80,12 @@ func startup(logger applog.Logger, cfg config.Producer, pub *broker.Publisher) l
 		// Its own goroutine, because Start only returns when ctx is cancelled: it
 		// reconnects on failure rather than giving the process back.
 		go func() {
+			sink := codec.NewProtoSink(pub, logger)
 			err := wikistream.Start(ctx, wikistream.Config{
 				URL:       cfg.URL,
 				UserAgent: cfg.UserAgent,
 				Accept:    cfg.Accept,
-			}, http.DefaultClient, pub, logger)
+			}, http.DefaultClient, sink, logger)
 			// A cancelled context is the shutdown signal, not a problem to report.
 			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.AppErrorf(err, "wiki stream ended")
