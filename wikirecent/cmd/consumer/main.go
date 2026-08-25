@@ -18,6 +18,7 @@ import (
 	"wikirecent/internal/flusher"
 	"wikirecent/internal/httpapi"
 	"wikirecent/internal/lifecycle"
+	"wikirecent/internal/metrics"
 	"wikirecent/internal/repository"
 	"wikirecent/internal/stats"
 
@@ -76,11 +77,20 @@ func main() {
 		}
 	}()
 
+	reg := metrics.NewRegistry()
+	eventMetrics := metrics.NewEvents(reg)
+
+	batchObserver := metrics.NewBatchCounters(
+		eventMetrics.ConsumedFromRedpanda,
+		eventMetrics.Processed,
+		eventMetrics.Failed,
+	)
+
 	sub, err := broker.NewSubscriber(broker.SubscriberConfig{
 		Brokers: cfg.Brokers,
 		Topic:   cfg.Topic,
 		Group:   cfg.Group,
-	}, logger, liveStats, codec.EventDecoder{})
+	}, logger, liveStats, codec.EventDecoder{}, batchObserver)
 	if err != nil {
 		log.Fatalf("broker: %v", err)
 	}
@@ -96,7 +106,7 @@ func main() {
 		log.Fatalf("auth: %v", err)
 	}
 
-	api := httpapi.New(liveStats, authSvc, logger)
+	api := httpapi.New(liveStats, authSvc, logger, metrics.Handler(reg))
 
 	runner, err := lifecycle.New(lifecycle.Config{
 		Addr:            ":" + strconv.Itoa(cfg.Port),

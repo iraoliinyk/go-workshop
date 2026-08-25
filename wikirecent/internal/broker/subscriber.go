@@ -26,9 +26,10 @@ type Subscriber struct {
 	log    applog.Logger
 	stats  Recorder
 	dec    Decoder
+	obs    BatchObserver
 }
 
-func NewSubscriber(cfg SubscriberConfig, log applog.Logger, stats Recorder, dec Decoder) (*Subscriber, error) {
+func NewSubscriber(cfg SubscriberConfig, log applog.Logger, stats Recorder, dec Decoder, obs BatchObserver) (*Subscriber, error) {
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(cfg.Brokers...),
 		kgo.ClientID("wiki-consumer"),
@@ -41,14 +42,14 @@ func NewSubscriber(cfg SubscriberConfig, log applog.Logger, stats Recorder, dec 
 		return nil, &apperrors.ConsumeError{Err: err}
 	}
 
-	return NewSubscriberWithClient(client, log, stats, dec), nil
+	return NewSubscriberWithClient(client, log, stats, dec, obs), nil
 }
 
 // NewSubscriberWithClient builds a Subscriber on a poller the caller already has.
 // NewSubscriber is the normal path; this is the seam that lets a caller supply its
 // own client, which is how the tests reach the poll loop without a live broker.
-func NewSubscriberWithClient(client RecordPoller, log applog.Logger, stats Recorder, dec Decoder) *Subscriber {
-	return &Subscriber{client: client, log: log, stats: stats, dec: dec}
+func NewSubscriberWithClient(client RecordPoller, log applog.Logger, stats Recorder, dec Decoder, obs BatchObserver) *Subscriber {
+	return &Subscriber{client: client, log: log, stats: stats, dec: dec, obs: obs}
 }
 
 // Connect checks that the broker answers.
@@ -111,17 +112,21 @@ func (s *Subscriber) HandleBatch(ctx context.Context, batch []*kgo.Record) error
 		return ctx.Err()
 	}
 
+	s.obs.Consumed(len(batch))
+
 	for _, record := range batch {
 		event, perr := s.dec.Decode(record.Value)
 		if perr != nil {
 			// A broken payload never parses, so retrying it cannot help. Drop it and
 			// keep the batch alive: one bad record must not block a partition.
 			// Candidate for DLQ logic in ch-10.
+			s.obs.Failed()
 			s.log.AppErrorf(perr, "skipping bad record at %s/%d offset %d",
 				record.Topic, record.Partition, record.Offset)
 			continue
 		}
 		s.stats.Record(event)
+		s.obs.Processed()
 	}
 
 	// Checked again, so a shutdown in the middle of a batch does not lead to a commit.

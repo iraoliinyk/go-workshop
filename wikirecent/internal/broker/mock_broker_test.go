@@ -627,3 +627,231 @@ func (c *MockRecordPollerPollRecordsCall) DoAndReturn(f func(context.Context, in
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
+
+// MockPublishObserver is a mock of PublishObserver interface.
+type MockPublishObserver struct {
+	ctrl     *gomock.Controller
+	recorder *MockPublishObserverMockRecorder
+	isgomock struct{}
+}
+
+// MockPublishObserverMockRecorder is the mock recorder for MockPublishObserver.
+type MockPublishObserverMockRecorder struct {
+	mock *MockPublishObserver
+}
+
+// NewMockPublishObserver creates a new mock instance.
+func NewMockPublishObserver(ctrl *gomock.Controller) *MockPublishObserver {
+	mock := &MockPublishObserver{ctrl: ctrl}
+	mock.recorder = &MockPublishObserverMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockPublishObserver) EXPECT() *MockPublishObserverMockRecorder {
+	return m.recorder
+}
+
+// PublishFailed mocks base method.
+func (m *MockPublishObserver) PublishFailed() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "PublishFailed")
+}
+
+// PublishFailed indicates an expected call of PublishFailed.
+func (mr *MockPublishObserverMockRecorder) PublishFailed() *MockPublishObserverPublishFailedCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishFailed", reflect.TypeOf((*MockPublishObserver)(nil).PublishFailed))
+	return &MockPublishObserverPublishFailedCall{Call: call}
+}
+
+// MockPublishObserverPublishFailedCall wrap *gomock.Call
+type MockPublishObserverPublishFailedCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockPublishObserverPublishFailedCall) Return() *MockPublishObserverPublishFailedCall {
+	c.Call = c.Call.Return()
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockPublishObserverPublishFailedCall) Do(f func()) *MockPublishObserverPublishFailedCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockPublishObserverPublishFailedCall) DoAndReturn(f func()) *MockPublishObserverPublishFailedCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// Published mocks base method.
+func (m *MockPublishObserver) Published() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Published")
+}
+
+// Published indicates an expected call of Published.
+func (mr *MockPublishObserverMockRecorder) Published() *MockPublishObserverPublishedCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Published", reflect.TypeOf((*MockPublishObserver)(nil).Published))
+	return &MockPublishObserverPublishedCall{Call: call}
+}
+
+// MockPublishObserverPublishedCall wrap *gomock.Call
+type MockPublishObserverPublishedCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockPublishObserverPublishedCall) Return() *MockPublishObserverPublishedCall {
+	c.Call = c.Call.Return()
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockPublishObserverPublishedCall) Do(f func()) *MockPublishObserverPublishedCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockPublishObserverPublishedCall) DoAndReturn(f func()) *MockPublishObserverPublishedCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// MockBatchObserver is a mock of BatchObserver interface.
+type MockBatchObserver struct {
+	ctrl     *gomock.Controller
+	recorder *MockBatchObserverMockRecorder
+	isgomock struct{}
+}
+
+// MockBatchObserverMockRecorder is the mock recorder for MockBatchObserver.
+type MockBatchObserverMockRecorder struct {
+	mock *MockBatchObserver
+}
+
+// NewMockBatchObserver creates a new mock instance.
+func NewMockBatchObserver(ctrl *gomock.Controller) *MockBatchObserver {
+	mock := &MockBatchObserver{ctrl: ctrl}
+	mock.recorder = &MockBatchObserverMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockBatchObserver) EXPECT() *MockBatchObserverMockRecorder {
+	return m.recorder
+}
+
+// Consumed mocks base method.
+func (m *MockBatchObserver) Consumed(n int) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Consumed", n)
+}
+
+// Consumed indicates an expected call of Consumed.
+func (mr *MockBatchObserverMockRecorder) Consumed(n any) *MockBatchObserverConsumedCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Consumed", reflect.TypeOf((*MockBatchObserver)(nil).Consumed), n)
+	return &MockBatchObserverConsumedCall{Call: call}
+}
+
+// MockBatchObserverConsumedCall wrap *gomock.Call
+type MockBatchObserverConsumedCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockBatchObserverConsumedCall) Return() *MockBatchObserverConsumedCall {
+	c.Call = c.Call.Return()
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockBatchObserverConsumedCall) Do(f func(int)) *MockBatchObserverConsumedCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockBatchObserverConsumedCall) DoAndReturn(f func(int)) *MockBatchObserverConsumedCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// Failed mocks base method.
+func (m *MockBatchObserver) Failed() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Failed")
+}
+
+// Failed indicates an expected call of Failed.
+func (mr *MockBatchObserverMockRecorder) Failed() *MockBatchObserverFailedCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Failed", reflect.TypeOf((*MockBatchObserver)(nil).Failed))
+	return &MockBatchObserverFailedCall{Call: call}
+}
+
+// MockBatchObserverFailedCall wrap *gomock.Call
+type MockBatchObserverFailedCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockBatchObserverFailedCall) Return() *MockBatchObserverFailedCall {
+	c.Call = c.Call.Return()
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockBatchObserverFailedCall) Do(f func()) *MockBatchObserverFailedCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockBatchObserverFailedCall) DoAndReturn(f func()) *MockBatchObserverFailedCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// Processed mocks base method.
+func (m *MockBatchObserver) Processed() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Processed")
+}
+
+// Processed indicates an expected call of Processed.
+func (mr *MockBatchObserverMockRecorder) Processed() *MockBatchObserverProcessedCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Processed", reflect.TypeOf((*MockBatchObserver)(nil).Processed))
+	return &MockBatchObserverProcessedCall{Call: call}
+}
+
+// MockBatchObserverProcessedCall wrap *gomock.Call
+type MockBatchObserverProcessedCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockBatchObserverProcessedCall) Return() *MockBatchObserverProcessedCall {
+	c.Call = c.Call.Return()
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockBatchObserverProcessedCall) Do(f func()) *MockBatchObserverProcessedCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockBatchObserverProcessedCall) DoAndReturn(f func()) *MockBatchObserverProcessedCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}

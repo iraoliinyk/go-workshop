@@ -42,3 +42,14 @@ type RecordPoller interface {
 	AllowRebalance()
 	CloseAllowingRebalance()
 }
+
+type PublishObserver interface {
+	Published()
+	PublishFailed()
+}
+
+type BatchObserver interface {
+	Consumed(n int)
+	Processed()
+	Failed()
+}

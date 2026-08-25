@@ -17,7 +17,8 @@ import (
 func TestPublisher_ConnectPingsTheBroker(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	client := NewMockRecordProducer(ctrl)
-	p := broker.NewPublisherWithClient(client, applog.Logger{})
+	observer := NewMockPublishObserver(ctrl)
+	p := broker.NewPublisherWithClient(client, applog.Logger{}, observer)
 
 	ctx := context.Background()
 	// The exact ctx, not gomock.Any(): a lost context would make Connect hang
@@ -30,7 +31,8 @@ func TestPublisher_ConnectPingsTheBroker(t *testing.T) {
 func TestPublisher_ConnectWrapsAPingFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	client := NewMockRecordProducer(ctrl)
-	p := broker.NewPublisherWithClient(client, applog.Logger{})
+	observer := NewMockPublishObserver(ctrl)
+	p := broker.NewPublisherWithClient(client, applog.Logger{}, observer)
 
 	dialErr := errors.New("dial tcp 127.0.0.1:9092: connect: connection refused")
 	client.EXPECT().Ping(gomock.Any()).Return(dialErr)
@@ -48,7 +50,8 @@ func TestPublisher_ConnectWrapsAPingFailure(t *testing.T) {
 func TestPublisher_PublishSendsNoKey(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	client := NewMockRecordProducer(ctrl)
-	p := broker.NewPublisherWithClient(client, applog.Logger{})
+	observer := NewMockPublishObserver(ctrl)
+	p := broker.NewPublisherWithClient(client, applog.Logger{}, observer)
 
 	var got *kgo.Record
 	client.EXPECT().

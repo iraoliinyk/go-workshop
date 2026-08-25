@@ -26,6 +26,7 @@ type testEnv struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	dec    *MockDecoder
+	obs    *MockBatchObserver
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -42,7 +43,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		cancel: cancel,
 		dec:    NewMockDecoder(ctrl),
 	}
-	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats, env.dec)
+	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats, env.dec, env.obs)
 	return env
 }
 
@@ -236,7 +237,8 @@ func TestClose_AllowsRebalance(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	poller := NewMockRecordPoller(ctrl)
 	dec := NewMockDecoder(ctrl)
-	sub := broker.NewSubscriberWithClient(poller, applog.Logger{}, NewMockRecorder(ctrl), dec)
+	obs := NewMockBatchObserver(ctrl)
+	sub := broker.NewSubscriberWithClient(poller, applog.Logger{}, NewMockRecorder(ctrl), dec, obs)
 
 	// Plain Close would hang after a poll that never allowed a rebalance.
 	poller.EXPECT().CloseAllowingRebalance().Times(1)

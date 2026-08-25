@@ -1,0 +1,26 @@
+global:
+  # 5s, not the 15s default: the dashboard refreshes every 5s and rate() over a
+  # [1m] window needs several samples inside that window to draw anything.
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: wikistream
+    metrics_path: /metrics
+    static_configs:
+      # These labels are load-bearing, not decoration: wikistream_events_failed_total
+      # is exported by both processes with two different meanings, and this label is
+      # the only thing that separates a publish failure from a decode failure.
+      # Panel 103 of docs/rpcn_connector.json also filters on it. Do not rename them.
+      - targets: ["producer:7002"]
+        labels:
+          application: producer
+      - targets: ["consumer:7001"]
+        labels:
+          application: consumer
+
+  # Free extra: Redpanda's own broker metrics. Not part of the A/C.
+  - job_name: redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - targets: ["redpanda:9644"]

@@ -15,6 +15,7 @@ import (
 	"wikirecent/internal/applog"
 	"wikirecent/internal/auth"
 	"wikirecent/internal/httpapi"
+	"wikirecent/internal/metrics"
 	"wikirecent/internal/repository/memory"
 	"wikirecent/internal/stats/statsmodels"
 
@@ -42,7 +43,8 @@ func newTestAPI(t *testing.T) (*httpapi.API, *auth.Service, *Mocksnapshotter) {
 // that has to read what was written.
 func newTestAPILogged(t *testing.T, logger applog.Logger) (*httpapi.API, *auth.Service, *Mocksnapshotter) {
 	t.Helper()
-	users, tokens := memory.NewUserStore(), memory.NewRevocationStore()
+	reg := metrics.NewRegistry()
+	users, tokens, metricsHandler := memory.NewUserStore(), memory.NewRevocationStore(), metrics.Handler(reg)
 	svc, err := auth.New(users, tokens, auth.Config{
 		Secret: strings.Repeat("x", 32), // exactly the 32-byte minimum
 		Issuer: "wiki-stream-go",
@@ -53,7 +55,7 @@ func newTestAPILogged(t *testing.T, logger applog.Logger) (*httpapi.API, *auth.S
 	require.NoError(t, err)
 
 	stats := NewMocksnapshotter(gomock.NewController(t))
-	return httpapi.New(stats, svc, logger), svc, stats
+	return httpapi.New(stats, svc, logger, metricsHandler), svc, stats
 }
 
 // quietLogger is PROD pointed at io.Discard, not the zero Logger, which would print
