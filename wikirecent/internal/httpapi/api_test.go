@@ -342,3 +342,58 @@ func TestRequestID_AppearsInProdErrorLine(t *testing.T) {
 	assert.Contains(t, line, "panicked", "the line must say what happened")
 	assert.Contains(t, line, "request_id=", "the id must be an attribute, not pasted into the text")
 }
+
+func newAPIWithMetricsHandler(t *testing.T, metricsHandler http.Handler) *httpapi.API {
+	t.Helper()
+	logger := quietLogger(t)
+	svc, err := auth.New(memory.NewUserStore(), memory.NewRevocationStore(), auth.Config{
+		Secret: strings.Repeat("x", 32),
+		Issuer: "wiki-stream-go",
+		TTL:    time.Hour,
+		Cost:   testBcryptCost,
+		Log:    logger,
+	})
+	require.NoError(t, err)
+
+	stats := NewMocksnapshotter(gomock.NewController(t))
+	return httpapi.New(stats, svc, logger, metricsHandler)
+}
+
+func getMetrics(t *testing.T, api *httpapi.API) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	// No Authorization header, on purpose: Prometheus sends none.
+	api.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	return rec
+}
+
+// Missing from the public map, Guard answers 401 and Prometheus reads the target
+// as DOWN with the dashboard silently empty and no error anywhere.
+func TestMetrics_IsPublic(t *testing.T) {
+	api := newAPIWithMetricsHandler(t, metrics.Handler(metrics.NewRegistry()))
+
+	rec := getMetrics(t, api)
+
+	require.Equal(t, http.StatusOK, rec.Code, "the scrape must not need a token")
+}
+
+func TestMetrics_ExposesTheEventCounters(t *testing.T) {
+	reg := metrics.NewRegistry()
+	metrics.NewEvents(reg)
+	api := newAPIWithMetricsHandler(t, metrics.Handler(reg))
+
+	rec := getMetrics(t, api)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "wikistream_events_consumed_from_redpanda_total")
+}
+
+// 401 and not 404: mux.Handler returns an empty pattern for an unmatched path,
+// and "" is not in the public map, so Guard answers before net/http can.
+func TestRouter_WithoutMetricsHandler_DoesNotServeMetrics(t *testing.T) {
+	api := newAPIWithMetricsHandler(t, nil)
+
+	rec := getMetrics(t, api)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}

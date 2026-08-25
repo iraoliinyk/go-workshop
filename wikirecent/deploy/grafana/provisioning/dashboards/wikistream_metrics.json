@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "The five ch-6 acceptance-criteria metrics, one time series each. Derived and combined views live in docs/additional_metrics.json.",
+  "description": "Basic producer-consumer analytics.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -21,7 +21,7 @@
   "panels": [
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "A/C metric 1. Every payload the producer read from the Wikimedia SSE stream. This is the head of the pipeline, so no other rate should exceed it for the same period.",
+      "description": "Read from the Wikimedia SSE stream.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -81,7 +81,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "A/C metric 2. Events the broker acknowledged. Counted inside the produce promise, so a record that Redpanda later refused is never included. Should track metric 1 closely.",
+      "description": "Counted on broker acknowledgement.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -141,7 +141,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "A/C metric 3. Records the consumer poll loop pulled out of the topic. Delivery is at-least-once and a failed commit replays the whole poll, so this counts records handled, not distinct events.",
+      "description": "Records handled; replays count again.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -201,7 +201,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "A/C metric 4. Records that decoded and reached the stats recorder. Per batch, metric 3 always equals metric 4 plus metric 5, so a gap against metric 3 is exactly the failure rate.",
+      "description": "Decoded and recorded to stats.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -261,7 +261,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "A/C metric 5. Both processes export this counter, so it is split by application: consumer means a record would not decode and was dropped (a DLQ candidate), producer means the broker refused a record. Bars, not lines: failures are rare and a thin line is easy to miss. Anything above zero deserves a look at the logs.",
+      "description": "Consumer decode and producer publish failures.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -335,7 +335,7 @@
   ],
   "refresh": "5s",
   "schemaVersion": 38,
-  "tags": ["wikistream", "ch-6"],
+  "tags": ["wikistream", "ch-6-7"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},

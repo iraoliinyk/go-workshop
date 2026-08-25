@@ -68,6 +68,7 @@ func Handler(reg *prometheus.Registry) http.Handler {
 	return promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 }
 
+//go:generate go tool mockgen -source=metrics.go -destination=mock_metrics_test.go -package=metrics_test -typed
 type sink interface {
 	Publish(ctx context.Context, payload []byte) error
 }

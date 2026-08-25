@@ -6,8 +6,6 @@ providers:
     folder: Wikistream
     type: file
     disableDeletion: false
-    # true so a panel can be tweaked in the UI. The file still wins on restart, so
-    # export the JSON back into the repo after any UI change.
     allowUiUpdates: true
     updateIntervalSeconds: 10
     options:

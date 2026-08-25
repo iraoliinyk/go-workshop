@@ -69,3 +69,80 @@ func TestPublisher_PublishSendsNoKey(t *testing.T) {
 	// The topic is set once by DefaultProduceTopic in NewPublisher, not per record.
 	require.Empty(t, got.Topic)
 }
+
+func capturePromise(t *testing.T) (p *broker.Publisher, observer *MockPublishObserver, runPromise func(error)) {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	client := NewMockRecordProducer(ctrl)
+	observer = NewMockPublishObserver(ctrl)
+	p = broker.NewPublisherWithClient(client, applog.Logger{}, observer)
+
+	var promise func(*kgo.Record, error)
+	client.EXPECT().
+		Produce(gomock.Any(), gomock.Any(), gomock.Any()).
+		Do(func(_ context.Context, _ *kgo.Record, fn func(*kgo.Record, error)) {
+			promise = fn
+		})
+
+	return p, observer, func(err error) {
+		require.NotNil(t, promise, "Produce was never called, so there is no promise to run")
+		promise(&kgo.Record{}, err)
+	}
+}
+
+// No expectation on the observer: gomock fails on any call, and that is the
+// assertion. Produce is async, so counting here would count buffered records.
+func TestPublish_DoesNotCountBeforeThePromiseRuns(t *testing.T) {
+	p, _, _ := capturePromise(t)
+
+	require.NoError(t, p.Publish(context.Background(), []byte(validEvent)))
+}
+
+func TestPublish_CountsPersistedWhenThePromiseSucceeds(t *testing.T) {
+	p, observer, runPromise := capturePromise(t)
+	// No PublishFailed expectation: a successful delivery must not touch it.
+	observer.EXPECT().Published().Times(1)
+
+	require.NoError(t, p.Publish(context.Background(), []byte(validEvent)))
+	runPromise(nil)
+}
+
+func TestPublish_CountsFailedWhenThePromiseErrors(t *testing.T) {
+	p, observer, runPromise := capturePromise(t)
+	observer.EXPECT().PublishFailed().Times(1)
+
+	require.NoError(t, p.Publish(context.Background(), []byte(validEvent)))
+	runPromise(errors.New("MESSAGE_TOO_LARGE"))
+}
+
+// Shutdown suppresses the log line but never the counter: otherwise
+// persisted + failed stops matching what we tried to produce.
+func TestPublish_CountsFailedOnACancelledContext(t *testing.T) {
+	p, observer, runPromise := capturePromise(t)
+	observer.EXPECT().PublishFailed().Times(1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, p.Publish(ctx, []byte(validEvent)))
+	cancel()
+
+	runPromise(errors.New("client closed"))
+}
+
+func TestPublish_WithNilObserverDoesNotPanic(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	client := NewMockRecordProducer(ctrl)
+	p := broker.NewPublisherWithClient(client, applog.Logger{}, nil)
+
+	var promise func(*kgo.Record, error)
+	client.EXPECT().
+		Produce(gomock.Any(), gomock.Any(), gomock.Any()).
+		Do(func(_ context.Context, _ *kgo.Record, fn func(*kgo.Record, error)) {
+			promise = fn
+		}).Times(2)
+
+	require.NoError(t, p.Publish(context.Background(), []byte(validEvent)))
+	require.NotPanics(t, func() { promise(&kgo.Record{}, nil) })
+
+	require.NoError(t, p.Publish(context.Background(), []byte(validEvent)))
+	require.NotPanics(t, func() { promise(&kgo.Record{}, errors.New("boom")) })
+}
