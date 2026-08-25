@@ -42,7 +42,13 @@ func newTestEnv(t *testing.T) *testEnv {
 		ctx:    ctx,
 		cancel: cancel,
 		dec:    NewMockDecoder(ctrl),
+		obs:    NewMockBatchObserver(ctrl),
 	}
+
+	env.obs.EXPECT().Consumed(gomock.Any()).AnyTimes()
+	env.obs.EXPECT().Processed().AnyTimes()
+	env.obs.EXPECT().Failed().AnyTimes()
+
 	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats, env.dec, env.obs)
 	return env
 }

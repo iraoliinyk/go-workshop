@@ -109,4 +109,6 @@ func (c BatchCounters) Consumed(n int) { c.consumed.Add(float64(n)) }
 func (c BatchCounters) Processed()     { c.processed.Inc() }
 func (c BatchCounters) Failed()        { c.failed.Inc() }
 
-func NewBatchCounters(consumed, processed, failed prometheus.Counter) BatchCounters
+func NewBatchCounters(consumed, processed, failed prometheus.Counter) BatchCounters {
+	return BatchCounters{consumed: consumed, processed: processed, failed: failed}
+}

@@ -30,9 +30,10 @@ type API struct {
 
 func New(stats snapshotter, authSvc *auth.Service, logger applog.Logger, metricsHandler http.Handler) *API {
 	return &API{
-		stats: stats,
-		auth:  authSvc,
-		log:   logger,
+		stats:   stats,
+		auth:    authSvc,
+		log:     logger,
+		metrics: metricsHandler,
 	}
 }
 
