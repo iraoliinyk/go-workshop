@@ -8,7 +8,10 @@ import (
 	"wikirecent/internal/applog"
 	"wikirecent/internal/broker"
 	"wikirecent/internal/events"
+	"wikirecent/internal/metrics"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -25,6 +28,8 @@ type testEnv struct {
 	stats  *MockRecorder
 	ctx    context.Context
 	cancel context.CancelFunc
+	dec    *MockDecoder
+	obs    *MockBatchObserver
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -39,8 +44,15 @@ func newTestEnv(t *testing.T) *testEnv {
 		stats:  NewMockRecorder(ctrl),
 		ctx:    ctx,
 		cancel: cancel,
+		dec:    NewMockDecoder(ctrl),
+		obs:    NewMockBatchObserver(ctrl),
 	}
-	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats)
+
+	env.obs.EXPECT().Consumed(gomock.Any()).AnyTimes()
+	env.obs.EXPECT().Processed().AnyTimes()
+	env.obs.EXPECT().Failed().AnyTimes()
+
+	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats, env.dec, env.obs)
 	return env
 }
 
@@ -56,6 +68,12 @@ func (env *testEnv) expectPolls(fetches ...kgo.Fetches) {
 			env.cancel()
 			return nil
 		}).AnyTimes()
+}
+
+func (env *testEnv) expectDecodes(n int) {
+	env.dec.EXPECT().Decode(gomock.Any()).
+		Return(events.WikiEvent{User: "iryna", ServerURL: "https://ca.wikipedia.org"}, nil).
+		Times(n)
 }
 
 // The topic has 3 partitions. Fixtures name a partition explicitly, because the
@@ -104,6 +122,7 @@ func TestRun_CommitsOnceWithEveryRecordOfThePoll(t *testing.T) {
 		}).Times(1)
 	env.poller.EXPECT().AllowRebalance().Times(1)
 	env.stats.EXPECT().Record(gomock.Any()).Times(5)
+	env.expectDecodes(5)
 
 	require.NoError(t, env.sub.Run(env.ctx))
 
@@ -132,6 +151,7 @@ func TestRun_CommitFailureIsLoggedAndTheLoopContinues(t *testing.T) {
 		Return(errors.New("commit boom")).Times(2)
 	env.poller.EXPECT().AllowRebalance().Times(2)
 	env.stats.EXPECT().Record(gomock.Any()).Times(4)
+	env.expectDecodes(4)
 
 	require.NoError(t, env.sub.Run(env.ctx))
 }
@@ -172,6 +192,7 @@ func TestRun_EmptyPartitionsWithinAPollAreHarmless(t *testing.T) {
 	))
 
 	env.stats.EXPECT().Record(gomock.Any()).Times(2)
+	env.expectDecodes(2)
 	env.poller.EXPECT().CommitRecords(gomock.Any(), gomock.Any()).Return(nil).Times(1)
 	env.poller.EXPECT().AllowRebalance().Times(1)
 
@@ -179,14 +200,20 @@ func TestRun_EmptyPartitionsWithinAPollAreHarmless(t *testing.T) {
 }
 
 func TestRun_SkipsBadRecordAndStillCommitsThePoll(t *testing.T) {
+	bad := []byte(`{not json`)
 	batch := makeRecords(0, 0, 3)
-	batch[1].Value = []byte(`{not json`)
+	batch[1].Value = bad
 
 	env := newTestEnv(t)
 	env.expectPolls(fetchOf(partOf(0, batch)))
 
 	// Exactly 2 of the 3 records may reach the recorder. The commit still happens:
 	// a record that can never be decoded must not hold up its partition.
+	env.dec.EXPECT().Decode(bad).
+		Return(events.WikiEvent{}, errors.New("bad payload")).Times(1)
+	env.dec.EXPECT().Decode(gomock.Not(gomock.Eq(bad))).
+		Return(events.WikiEvent{User: "iryna", ServerURL: "https://ca.wikipedia.org"}, nil).Times(2)
+
 	env.stats.EXPECT().Record(gomock.Any()).Times(2)
 	env.poller.EXPECT().CommitRecords(gomock.Any(), gomock.Any()).Return(nil).Times(1)
 	env.poller.EXPECT().AllowRebalance().Times(1)
@@ -207,6 +234,7 @@ func TestRun_ShutdownMidBatchCommitsNothing(t *testing.T) {
 	// Cancelling from inside Record is what puts the shutdown in the middle of the
 	// batch. No CommitRecords expectation: a commit here would acknowledge records
 	// whose batch never finished.
+	env.expectDecodes(3)
 	env.stats.EXPECT().Record(gomock.Any()).Times(3).
 		Do(func(events.WikiEvent) { env.cancel() })
 	env.poller.EXPECT().AllowRebalance().Times(1)
@@ -217,10 +245,153 @@ func TestRun_ShutdownMidBatchCommitsNothing(t *testing.T) {
 func TestClose_AllowsRebalance(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	poller := NewMockRecordPoller(ctrl)
-	sub := broker.NewSubscriberWithClient(poller, applog.Logger{}, NewMockRecorder(ctrl))
+	dec := NewMockDecoder(ctrl)
+	obs := NewMockBatchObserver(ctrl)
+	sub := broker.NewSubscriberWithClient(poller, applog.Logger{}, NewMockRecorder(ctrl), dec, obs)
 
 	// Plain Close would hang after a poll that never allowed a rebalance.
 	poller.EXPECT().CloseAllowingRebalance().Times(1)
 
 	require.NoError(t, sub.Close(context.Background()))
+}
+
+// countedEnv uses real counters, not MockBatchObserver, so a test asserts the
+// numbers rather than a call count.
+type countedEnv struct {
+	sub      *broker.Subscriber
+	poller   *MockRecordPoller
+	dec      *MockDecoder
+	stats    *MockRecorder
+	counters *metrics.Events
+}
+
+func newCountedEnv(t *testing.T) *countedEnv {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	counters := metrics.NewEvents(prometheus.NewRegistry())
+	env := &countedEnv{
+		poller:   NewMockRecordPoller(ctrl),
+		dec:      NewMockDecoder(ctrl),
+		stats:    NewMockRecorder(ctrl),
+		counters: counters,
+	}
+	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats, env.dec,
+		metrics.NewBatchCounters(counters.ConsumedFromRedpanda, counters.Processed, counters.Failed))
+	return env
+}
+
+func (env *countedEnv) expectDecodeMix(bad, good int) []byte {
+	badPayload := []byte(`{not proto`)
+	if bad > 0 {
+		env.dec.EXPECT().Decode(badPayload).
+			Return(events.WikiEvent{}, errors.New("bad payload")).Times(bad)
+	}
+	if good > 0 {
+		env.dec.EXPECT().Decode(gomock.Not(gomock.Eq(badPayload))).
+			Return(events.WikiEvent{User: "iryna", ServerURL: "https://ca.wikipedia.org"}, nil).Times(good)
+		env.stats.EXPECT().Record(gomock.Any()).Times(good)
+	}
+	return badPayload
+}
+
+func TestHandleBatch_CountsConsumedProcessedAndFailed(t *testing.T) {
+	env := newCountedEnv(t)
+	batch := makeRecords(0, 0, 3)
+	batch[1].Value = env.expectDecodeMix(1, 2)
+
+	require.NoError(t, env.sub.HandleBatch(context.Background(), batch))
+
+	assert.Equal(t, 3.0, testutil.ToFloat64(env.counters.ConsumedFromRedpanda))
+	assert.Equal(t, 2.0, testutil.ToFloat64(env.counters.Processed))
+	assert.Equal(t, 1.0, testutil.ToFloat64(env.counters.Failed))
+}
+
+// The dashboard draws consumed and processed on one chart and reads the distance
+// between them as the failure rate. A lost record makes that chart lie silently.
+func TestHandleBatch_KeepsConsumedEqualToProcessedPlusFailed(t *testing.T) {
+	tests := []struct {
+		name string
+		size int
+		bad  []int
+	}{
+		{name: "all good", size: 4},
+		{name: "all bad", size: 4, bad: []int{0, 1, 2, 3}},
+		{name: "first bad", size: 4, bad: []int{0}},
+		{name: "last bad", size: 4, bad: []int{3}},
+		{name: "alternating", size: 5, bad: []int{1, 3}},
+		{name: "single good record", size: 1},
+		{name: "single bad record", size: 1, bad: []int{0}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newCountedEnv(t)
+			good := tt.size - len(tt.bad)
+			badPayload := env.expectDecodeMix(len(tt.bad), good)
+
+			batch := makeRecords(0, 0, tt.size)
+			for _, i := range tt.bad {
+				batch[i].Value = badPayload
+			}
+
+			require.NoError(t, env.sub.HandleBatch(context.Background(), batch))
+
+			consumed := testutil.ToFloat64(env.counters.ConsumedFromRedpanda)
+			processed := testutil.ToFloat64(env.counters.Processed)
+			failed := testutil.ToFloat64(env.counters.Failed)
+
+			assert.Equal(t, float64(tt.size), consumed)
+			assert.Equal(t, float64(good), processed)
+			assert.Equal(t, float64(len(tt.bad)), failed)
+			assert.Equal(t, consumed, processed+failed, "consumed must equal processed + failed")
+		})
+	}
+}
+
+// A batch abandoned at shutdown was never consumed. Counting it would leave a
+// permanent gap between consumed and processed+failed after every restart.
+func TestHandleBatch_CountsNothingWhenTheContextIsAlreadyDone(t *testing.T) {
+	env := newCountedEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// No Decode or Record expectation: HandleBatch must return before either.
+	require.Error(t, env.sub.HandleBatch(ctx, makeRecords(0, 0, 3)))
+
+	assert.Zero(t, testutil.ToFloat64(env.counters.ConsumedFromRedpanda))
+	assert.Zero(t, testutil.ToFloat64(env.counters.Processed))
+	assert.Zero(t, testutil.ToFloat64(env.counters.Failed))
+}
+
+// Only meaningful under -race: it is what proves the counters are safe for the
+// concurrent HandleBatch goroutines Run fans out.
+func TestRun_CountsAcrossConcurrentSubBatches(t *testing.T) {
+	env := newCountedEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	// Over maxBatchSize (100), so each partition splits in two: six sub-batches.
+	const perPartition = 150
+	total := 3 * perPartition
+
+	env.poller.EXPECT().PollRecords(gomock.Any(), gomock.Any()).Return(fetchOf(
+		partOf(0, makeRecords(0, 0, perPartition)),
+		partOf(1, makeRecords(1, 0, perPartition)),
+		partOf(2, makeRecords(2, 0, perPartition)),
+	))
+	env.poller.EXPECT().PollRecords(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(context.Context, int) kgo.Fetches {
+			cancel()
+			return nil
+		}).AnyTimes()
+
+	env.expectDecodeMix(0, total)
+	env.poller.EXPECT().CommitRecords(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+	env.poller.EXPECT().AllowRebalance().Times(1)
+
+	require.NoError(t, env.sub.Run(ctx))
+
+	assert.Equal(t, float64(total), testutil.ToFloat64(env.counters.ConsumedFromRedpanda))
+	assert.Equal(t, float64(total), testutil.ToFloat64(env.counters.Processed))
+	assert.Zero(t, testutil.ToFloat64(env.counters.Failed))
 }

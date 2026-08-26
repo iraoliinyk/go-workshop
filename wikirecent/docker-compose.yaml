@@ -57,7 +57,10 @@ services:
     ports:
       - "8080:8080"
     environment:
-      KAFKA_BROKERS: redpanda:9092
+      CONFIG_FILEPATH: /etc/console/console.yaml
+    volumes:
+      - ./deploy/console/console.yaml:/etc/console/console.yaml:ro
+      - ./proto:/etc/protos:ro
     depends_on:
       redpanda:
         condition: service_healthy
@@ -72,11 +75,25 @@ services:
     # -r 1: replication factor is per PARTITION, not per topic, so -p 3 -r 1
     # -r 3 would be introduced in ch-8
     # retention.ms=86400000 is 24h. The default is 7 days, which is a lot for the workshop.
+    #
+    # Every line below must keep the same indentation. A `>-` block does NOT fold a
+    # more-indented line, so one extra space splits this into several shell commands.
+    #
+    # The describe fallback is what makes a re-run idempotent: create exits 1 on
+    # TOPIC_ALREADY_EXISTS. Plain `|| true` would also hide a broken command.
     command:
       - >-
-        rpk topic create ${REDPANDA_TOPIC:-wiki.recentchange}
-        -p 3 -r 1 --topic-config retention.ms=86400000
-        --brokers redpanda:9092 || true
+        rpk topic create ${REDPANDA_TOPIC:-wiki.recentchange.proto}
+        -p 3 -r 1
+        --topic-config cleanup.policy=delete
+        --topic-config retention.ms=86400000
+        --topic-config retention.bytes=536870912
+        --topic-config compression.type=producer
+        --topic-config message.timestamp.type=CreateTime
+        --brokers redpanda:9092
+        || rpk topic describe ${REDPANDA_TOPIC:-wiki.recentchange.proto}
+        --brokers redpanda:9092
+
     depends_on:
       redpanda:
         condition: service_healthy
@@ -128,7 +145,42 @@ services:
       retries: 3
       start_period: 5s
 
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      # 6h is plenty for a workshop and keeps the volume small.
+      - --storage.tsdb.retention.time=6h
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - producer
+      - consumer
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   cassandra-data:
   # to keep it separate from container writable layer
   redpanda-data:
+  prometheus-data:
+  grafana-data:

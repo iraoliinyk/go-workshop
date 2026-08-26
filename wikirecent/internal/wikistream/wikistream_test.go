@@ -91,7 +91,7 @@ func TestReadStream_ReturnsTheIDOfTheLastEventItRead(t *testing.T) {
 
 	body := "event: message\n" +
 		"id: " + firstEventID + "\n" +
-		`data: {"user":"Iryna"}` + "\n" +
+		`data: {"user":"iryna"}` + "\n" +
 		"\n" +
 		"event: message\n" +
 		"id: " + secondEventID + "\n" +
@@ -99,7 +99,7 @@ func TestReadStream_ReturnsTheIDOfTheLastEventItRead(t *testing.T) {
 		"\n"
 
 	gomock.InOrder(
-		sink.EXPECT().Publish(gomock.Any(), []byte(`{"user":"Iryna"}`)).Return(nil),
+		sink.EXPECT().Publish(gomock.Any(), []byte(`{"user":"iryna"}`)).Return(nil),
 		sink.EXPECT().Publish(gomock.Any(), []byte(`{"user":"Bot"}`)).Return(nil),
 	)
 
@@ -116,7 +116,7 @@ func TestReadStream_ReturnsTheIDItSawWhenPublishFails(t *testing.T) {
 	brokerErr := errors.New("broker refused the record")
 	sink.EXPECT().Publish(gomock.Any(), gomock.Any()).Return(brokerErr)
 
-	body := "id: " + firstEventID + "\n" + `data: {"user":"Iryna"}` + "\n"
+	body := "id: " + firstEventID + "\n" + `data: {"user":"iryna"}` + "\n"
 
 	got, err := wikistream.ReadStream(context.Background(), strings.NewReader(body), sink, "")
 
@@ -130,7 +130,7 @@ func TestStart_ResumesFromTheLastEventIDAfterAReconnect(t *testing.T) {
 	sink := NewMockSink(ctrl)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	sink.EXPECT().Publish(gomock.Any(), []byte(`{"user":"Iryna"}`)).Return(nil)
+	sink.EXPECT().Publish(gomock.Any(), []byte(`{"user":"iryna"}`)).Return(nil)
 
 	var sent []string // the Last-Event-ID header of each request, in order
 	record := func(req *http.Request) { sent = append(sent, req.Header.Get("Last-Event-ID")) }
@@ -138,7 +138,7 @@ func TestStart_ResumesFromTheLastEventIDAfterAReconnect(t *testing.T) {
 	gomock.InOrder(
 		client.EXPECT().Do(gomock.Any()).DoAndReturn(func(req *http.Request) (*http.Response, error) {
 			record(req)
-			return okResponse("id: " + firstEventID + "\n" + `data: {"user":"Iryna"}` + "\n"), nil
+			return okResponse("id: " + firstEventID + "\n" + `data: {"user":"iryna"}` + "\n"), nil
 		}),
 		client.EXPECT().Do(gomock.Any()).DoAndReturn(func(req *http.Request) (*http.Response, error) {
 			record(req)
@@ -168,7 +168,7 @@ func TestStart_KeepsTheLastEventIDWhenAReconnectIsRejected(t *testing.T) {
 	gomock.InOrder(
 		client.EXPECT().Do(gomock.Any()).DoAndReturn(func(req *http.Request) (*http.Response, error) {
 			record(req)
-			return okResponse("id: " + firstEventID + "\n" + `data: {"user":"Iryna"}` + "\n"), nil
+			return okResponse("id: " + firstEventID + "\n" + `data: {"user":"iryna"}` + "\n"), nil
 		}),
 		// A rejected connect never reaches ReadStream, so it must not touch the id.
 		client.EXPECT().Do(gomock.Any()).DoAndReturn(func(req *http.Request) (*http.Response, error) {

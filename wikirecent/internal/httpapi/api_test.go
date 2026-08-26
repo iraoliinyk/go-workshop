@@ -15,6 +15,7 @@ import (
 	"wikirecent/internal/applog"
 	"wikirecent/internal/auth"
 	"wikirecent/internal/httpapi"
+	"wikirecent/internal/metrics"
 	"wikirecent/internal/repository/memory"
 	"wikirecent/internal/stats/statsmodels"
 
@@ -42,7 +43,8 @@ func newTestAPI(t *testing.T) (*httpapi.API, *auth.Service, *Mocksnapshotter) {
 // that has to read what was written.
 func newTestAPILogged(t *testing.T, logger applog.Logger) (*httpapi.API, *auth.Service, *Mocksnapshotter) {
 	t.Helper()
-	users, tokens := memory.NewUserStore(), memory.NewRevocationStore()
+	reg := metrics.NewRegistry()
+	users, tokens, metricsHandler := memory.NewUserStore(), memory.NewRevocationStore(), metrics.Handler(reg)
 	svc, err := auth.New(users, tokens, auth.Config{
 		Secret: strings.Repeat("x", 32), // exactly the 32-byte minimum
 		Issuer: "wiki-stream-go",
@@ -53,7 +55,7 @@ func newTestAPILogged(t *testing.T, logger applog.Logger) (*httpapi.API, *auth.S
 	require.NoError(t, err)
 
 	stats := NewMocksnapshotter(gomock.NewController(t))
-	return httpapi.New(stats, svc, logger), svc, stats
+	return httpapi.New(stats, svc, logger, metricsHandler), svc, stats
 }
 
 // quietLogger is PROD pointed at io.Discard, not the zero Logger, which would print
@@ -339,4 +341,59 @@ func TestRequestID_AppearsInProdErrorLine(t *testing.T) {
 	assert.Containsf(t, line, id, "the log line must carry the id the caller got (%s)", id)
 	assert.Contains(t, line, "panicked", "the line must say what happened")
 	assert.Contains(t, line, "request_id=", "the id must be an attribute, not pasted into the text")
+}
+
+func newAPIWithMetricsHandler(t *testing.T, metricsHandler http.Handler) *httpapi.API {
+	t.Helper()
+	logger := quietLogger(t)
+	svc, err := auth.New(memory.NewUserStore(), memory.NewRevocationStore(), auth.Config{
+		Secret: strings.Repeat("x", 32),
+		Issuer: "wiki-stream-go",
+		TTL:    time.Hour,
+		Cost:   testBcryptCost,
+		Log:    logger,
+	})
+	require.NoError(t, err)
+
+	stats := NewMocksnapshotter(gomock.NewController(t))
+	return httpapi.New(stats, svc, logger, metricsHandler)
+}
+
+func getMetrics(t *testing.T, api *httpapi.API) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	// No Authorization header, on purpose: Prometheus sends none.
+	api.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	return rec
+}
+
+// Missing from the public map, Guard answers 401 and Prometheus reads the target
+// as DOWN with the dashboard silently empty and no error anywhere.
+func TestMetrics_IsPublic(t *testing.T) {
+	api := newAPIWithMetricsHandler(t, metrics.Handler(metrics.NewRegistry()))
+
+	rec := getMetrics(t, api)
+
+	require.Equal(t, http.StatusOK, rec.Code, "the scrape must not need a token")
+}
+
+func TestMetrics_ExposesTheEventCounters(t *testing.T) {
+	reg := metrics.NewRegistry()
+	metrics.NewEvents(reg)
+	api := newAPIWithMetricsHandler(t, metrics.Handler(reg))
+
+	rec := getMetrics(t, api)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "wikistream_events_consumed_from_redpanda_total")
+}
+
+// 401 and not 404: mux.Handler returns an empty pattern for an unmatched path,
+// and "" is not in the public map, so Guard answers before net/http can.
+func TestRouter_WithoutMetricsHandler_DoesNotServeMetrics(t *testing.T) {
+	api := newAPIWithMetricsHandler(t, nil)
+
+	rec := getMetrics(t, api)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }

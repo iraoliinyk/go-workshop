@@ -24,6 +24,10 @@ type Recorder interface {
 	Record(event events.WikiEvent)
 }
 
+type Decoder interface {
+	Decode(value []byte) (events.WikiEvent, error)
+}
+
 type RecordProducer interface {
 	Produce(ctx context.Context, r *kgo.Record, promise func(*kgo.Record, error))
 	Ping(ctx context.Context) error
@@ -37,4 +41,15 @@ type RecordPoller interface {
 	Ping(ctx context.Context) error
 	AllowRebalance()
 	CloseAllowingRebalance()
+}
+
+type PublishObserver interface {
+	Published()
+	PublishFailed()
+}
+
+type BatchObserver interface {
+	Consumed(n int)
+	Processed()
+	Failed()
 }

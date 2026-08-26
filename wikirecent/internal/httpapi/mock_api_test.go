@@ -10,8 +10,8 @@
 package httpapi_test
 
 import (
-	statsmodels "wikirecent/internal/stats/statsmodels"
 	reflect "reflect"
+	statsmodels "wikirecent/internal/stats/statsmodels"
 
 	gomock "go.uber.org/mock/gomock"
 )

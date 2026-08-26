@@ -22,16 +22,18 @@ type snapshotter interface {
 
 // API holds the dependencies shared by all HTTP handlers.
 type API struct {
-	stats snapshotter
-	auth  *auth.Service
-	log   applog.Logger
+	stats   snapshotter
+	auth    *auth.Service
+	log     applog.Logger
+	metrics http.Handler
 }
 
-func New(stats snapshotter, authSvc *auth.Service, logger applog.Logger) *API {
+func New(stats snapshotter, authSvc *auth.Service, logger applog.Logger, metricsHandler http.Handler) *API {
 	return &API{
-		stats: stats,
-		auth:  authSvc,
-		log:   logger,
+		stats:   stats,
+		auth:    authSvc,
+		log:     logger,
+		metrics: metricsHandler,
 	}
 }
 
@@ -43,11 +45,16 @@ func (a *API) Router() http.Handler {
 	mux.HandleFunc("POST /auth/logout", a.handleLogout)     // protected
 	mux.HandleFunc("GET /stats", a.handleStats)             // protected
 
+	if a.metrics != nil {
+		mux.Handle("GET /metrics", a.metrics)
+	}
+
 	// The rest are protected by default.
 	public := map[string]struct{}{
 		"GET /status":         {},
 		"POST /auth/register": {},
 		"POST /auth/login":    {},
+		"GET /metrics":        {}, // Prometheus sends no bearer token
 	}
 
 	// Order matters. RequestID is outermost, so every line below can carry the id.
