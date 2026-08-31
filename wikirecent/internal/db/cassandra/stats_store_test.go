@@ -43,7 +43,26 @@ func midnight(y int, m time.Month, d int) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
-func TestStatsStore_SeriesReturnsSavedSnapshotsNewestFirst(t *testing.T) {
+// readSeries reads points straight off the node. StatsStore no longer exposes a read
+// for stats_snapshot — the write path is what production uses, and Grafana queries
+// Cassandra directly — so the assertions below own their own query, the same way the
+// schema subtest already queries system_schema.
+func readSeries(t *testing.T, sess *gocql.Session, day, from, to time.Time) []statsmodels.SnapshotPoint {
+	t.Helper()
+	const q = `SELECT snapshot_ts, total_messages, bot_edits, human_edits, distinct_users
+		FROM stats_snapshot WHERE day = ? AND snapshot_ts >= ? AND snapshot_ts <= ?`
+	iter := sess.Query(q, day.UTC(), from.UTC(), to.UTC()).IterContext(context.Background())
+
+	var out []statsmodels.SnapshotPoint
+	var p statsmodels.SnapshotPoint
+	for iter.Scan(&p.At, &p.TotalMessages, &p.BotEdits, &p.HumanEdits, &p.DistinctUsers) {
+		out = append(out, p)
+	}
+	require.NoError(t, iter.Close())
+	return out
+}
+
+func TestStatsStore_SaveSnapshotRoundTripsNewestFirst(t *testing.T) {
 	store, sess := newStatsStore(t)
 	ctx := context.Background()
 
@@ -70,8 +89,7 @@ func TestStatsStore_SeriesReturnsSavedSnapshotsNewestFirst(t *testing.T) {
 
 	// Read the whole range back. The table orders rows newest first, so check that
 	// order instead of assuming the oldest comes first.
-	got, err := store.Series(ctx, day, base.Add(-time.Minute), base.Add(time.Minute))
-	require.NoError(t, err, "Series")
+	got := readSeries(t, sess, day, base.Add(-time.Minute), base.Add(time.Minute))
 	require.Len(t, got, len(want), "one point per SaveSnapshot")
 
 	for i, p := range got {
@@ -89,8 +107,7 @@ func TestStatsStore_SeriesReturnsSavedSnapshotsNewestFirst(t *testing.T) {
 	assert.WithinDuration(t, newest, got[0].At.UTC(), time.Millisecond, "timestamp round trip")
 
 	// The day comes from at, so asking for a different day must return nothing.
-	other, err := store.Series(ctx, day.AddDate(0, 0, 1), base.Add(-time.Minute), base.Add(time.Minute))
-	require.NoError(t, err)
+	other := readSeries(t, sess, day.AddDate(0, 0, 1), base.Add(-time.Minute), base.Add(time.Minute))
 	assert.Empty(t, other, "wrong day partition must return nothing")
 }
 
@@ -153,13 +170,11 @@ func TestStatsStore_PrimaryKeyPartitionsByDayAndClustersByTime(t *testing.T) {
 		// the two reads, so anything they return differently is the partition key.
 		from, to := lastOfFirst.Add(-time.Hour), firstOfSecond.Add(time.Hour)
 
-		got, err := store.Series(ctx, first, from, to)
-		require.NoError(t, err)
+		got := readSeries(t, sess, first, from, to)
 		require.Len(t, got, 1, "the window spans both rows, but day %s holds one", first.Format(time.DateOnly))
 		assert.Equal(t, int64(111), got[0].TotalMessages)
 
-		got, err = store.Series(ctx, second, from, to)
-		require.NoError(t, err)
+		got = readSeries(t, sess, second, from, to)
 		require.Len(t, got, 1, "midnight belongs to the new day")
 		assert.Equal(t, int64(222), got[0].TotalMessages)
 	})
@@ -177,8 +192,10 @@ func TestStatsStore_FailureIsRepositoryError(t *testing.T) {
 	_, ok := errors.AsType[*apperrors.RepositoryError](err)
 	assert.True(t, ok, "SaveSnapshot: want *apperrors.RepositoryError, got %T: %v", err, err)
 
-	_, err = store.Series(ctx, day, day, day.Add(24*time.Hour))
+	// Totals is the read that replaced Series on this type, so it is the one that has
+	// to keep wrapping.
+	_, err = store.Totals(ctx, day)
 	require.Error(t, err)
 	_, ok = errors.AsType[*apperrors.RepositoryError](err)
-	assert.True(t, ok, "Series: want *apperrors.RepositoryError, got %T: %v", err, err)
+	assert.True(t, ok, "Totals: want *apperrors.RepositoryError, got %T: %v", err, err)
 }

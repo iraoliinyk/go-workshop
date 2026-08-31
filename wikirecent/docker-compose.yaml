@@ -84,7 +84,7 @@ services:
     command:
       - >-
         rpk topic create ${REDPANDA_TOPIC:-wiki.recentchange.proto}
-        -p 3 -r 1
+        -p ${REDPANDA_PARTITIONS:-3}  -r {REDPANDA_REPLICAS:-1} 
         --topic-config cleanup.policy=delete
         --topic-config retention.ms=86400000
         --topic-config retention.bytes=536870912

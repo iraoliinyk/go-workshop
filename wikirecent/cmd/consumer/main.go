@@ -69,9 +69,9 @@ func main() {
 		log.Fatalf("flusher: %v", err)
 	}
 
-	poolDone := make(chan struct{})
+	flushDone := make(chan struct{})
 	go func() {
-		defer close(poolDone)
+		defer close(flushDone)
 		if err := snapshotFlusher.Run(ctx); err != nil {
 			logger.AppErrorf(err, "flusher stopped")
 		}
@@ -87,9 +87,13 @@ func main() {
 	)
 
 	subscriberConfig := broker.SubscriberConfig{
-		Brokers: cfg.Brokers,
-		Topic:   cfg.Topic,
-		Group:   cfg.Group,
+		Brokers:        cfg.Brokers,
+		Topic:          cfg.Topic,
+		Group:          cfg.Group,
+		MaxPollRecords: cfg.MaxPollRecords,
+		FetchMinBytes:  cfg.FetchMinBytes,
+		FetchMaxWait:   cfg.FetchMaxWait,
+		DrainGrace:     cfg.ConsumerDrainGrace,
 	}
 
 	totals, err := stores.Stats.Totals(ctx, time.Now().UTC())
@@ -97,17 +101,6 @@ func main() {
 		logger.AppErrorf(err, "could not restore totals, starting from zero")
 	} else {
 		liveStats.Seed(totals)
-	}
-
-	sub, err := broker.NewSubscriber(subscriberConfig, logger, liveStats, codec.EventDecoder{}, stores.Stats, batchObserver)
-
-	pool, err := broker.NewPool(broker.PoolConfig{
-		SubscriberConfig: subscriberConfig,
-		Workers:          cfg.ConsumerWorkers,
-	}, logger, liveStats, codec.EventDecoder{}, stores.Stats, batchObserver)
-
-	if err != nil {
-		log.Fatalf("broker: %v", err)
 	}
 
 	authSvc, err := auth.New(stores.Users, stores.Tokens, auth.Config{
@@ -123,11 +116,21 @@ func main() {
 
 	api := httpapi.New(liveStats, authSvc, logger, metrics.Handler(reg))
 
+	pool, err := broker.NewPool(broker.PoolConfig{
+		SubscriberConfig: subscriberConfig,
+		Workers:          cfg.ConsumerWorkers,
+		MaxPartitions:    cfg.MaxPartitions,
+	}, logger, liveStats, codec.EventDecoder{}, stores.Stats, batchObserver)
+	if err != nil {
+		log.Fatalf("broker: %v", err)
+	}
+	poolDone := make(chan struct{})
+
 	runner, err := lifecycle.New(lifecycle.Config{
 		Addr:            ":" + strconv.Itoa(cfg.Port),
 		Handler:         api.Router(),
 		Startup:         startup(logger, pool, poolDone),
-		Shutdown:        shutdown(logger, sub, pool, poolDone),
+		Shutdown:        shutdown(logger, pool, poolDone, flushDone),
 		ShutdownTimeout: shutdownTimeout,
 		Log:             logger,
 	})
@@ -137,6 +140,16 @@ func main() {
 
 	logger.Debugf("consumer listening on :%d, topic %q, group %q", cfg.Port, cfg.Topic, cfg.Group)
 	runner.Run(ctx)
+}
+
+// waitFor blocks until done is closed, bounded by the runner's shutdown budget so one
+// stuck goroutine cannot hold the process open.
+func waitFor(ctx context.Context, logger applog.Logger, done <-chan struct{}, what string) {
+	select {
+	case <-done:
+	case <-ctx.Done():
+		logger.AppErrorf(ctx.Err(), "gave up waiting for %s", what)
+	}
 }
 
 // startup pings the broker, then runs the poll loop in its own goroutine.
@@ -156,21 +169,19 @@ func startup(logger applog.Logger, pool *broker.Pool, poolDone chan struct{}) li
 }
 
 // shutdown unwinds what the runner does not own.
-func shutdown(logger applog.Logger, sub *broker.Subscriber, pool *broker.Pool, poolDone <-chan struct{}) lifecycle.Hook {
+func shutdown(logger applog.Logger, pool *broker.Pool,
+	poolDone, flushDone <-chan struct{}) lifecycle.Hook {
 	return func(ctx context.Context) error {
-		if err := sub.Close(ctx); err != nil {
-			logger.AppErrorf(err, "subscriber close failed")
-		}
-		// Wait for the workers to leave their poll loops BEFORE taking their clients away,
-		// bounded by the runner's budget so a stuck worker cannot hold the process open.
-		select {
-		case <-poolDone:
-		case <-ctx.Done():
-			logger.AppErrorf(ctx.Err(), "gave up waiting for the consumer pool")
-		}
+		// Wait for the workers to leave their poll loops BEFORE taking their clients
+		// away. Closing first pulls the client out from under a running poll.
+		waitFor(ctx, logger, poolDone, "the consumer pool")
 		if err := pool.Close(ctx); err != nil {
 			logger.AppErrorf(err, "pool close failed")
 		}
+
+		// Last, because the flusher's final save runs on a fresh context, and main's
+		// deferred stores.Close() would close the session under it.
+		waitFor(ctx, logger, flushDone, "the last snapshot flush")
 		return nil
 	}
 }

@@ -4,20 +4,13 @@ import (
 	"sync"
 	"testing"
 
-	"wikirecent/internal/events"
 	"wikirecent/internal/stats"
+	"wikirecent/internal/stats/statsmodels"
 
 	"github.com/stretchr/testify/assert"
 )
 
-// newEvent builds a WikiEvent from the three fields the tests care about.
-func newEvent(user string, bot bool, serverURL string) events.WikiEvent {
-	return events.WikiEvent{
-		User:      user,
-		Bot:       bot,
-		ServerURL: serverURL,
-	}
-}
+const enWiki = "https://en.wikipedia.org"
 
 func TestNew_InitialisesEmptyStats(t *testing.T) {
 	st := stats.New()
@@ -30,83 +23,88 @@ func TestNew_InitialisesEmptyStats(t *testing.T) {
 	assert.Empty(t, snap.ByServerURL)
 }
 
-func TestRecord_CountsTotalMessages(t *testing.T) {
+// Two Deltas, because Apply now takes one poll at a time and the totals have to
+// survive across polls.
+func TestApply_CountsTotalMessages(t *testing.T) {
 	st := stats.New()
 
-	st.Record(newEvent("iryna", false, "https://en.wikipedia.org"))
-	st.Record(newEvent("john", false, "https://en.wikipedia.org"))
-	st.Record(newEvent("carol", true, "https://en.wikipedia.org"))
+	st.Apply(statsmodels.Delta{Messages: 2})
+	st.Apply(statsmodels.Delta{Messages: 1})
 
-	got := st.Snapshot().TotalMessages
-
-	assert.Equal(t, int64(3), got)
+	assert.Equal(t, int64(3), st.Snapshot().TotalMessages)
 }
 
-func TestRecord_CountsDistinctUsers(t *testing.T) {
+func TestApply_CountsDistinctUsers(t *testing.T) {
 	st := stats.New()
 
-	// iryna appears twice but must be counted once
-	st.Record(newEvent("iryna", false, "https://en.wikipedia.org"))
-	st.Record(newEvent("iryna", false, "https://en.wikipedia.org"))
-	st.Record(newEvent("john", false, "https://en.wikipedia.org"))
+	// iryna appears twice in one Delta and again in the next, but counts once.
+	st.Apply(statsmodels.Delta{Messages: 2, Users: []string{"iryna", "iryna"}})
+	st.Apply(statsmodels.Delta{Messages: 2, Users: []string{"iryna", "john"}})
 
 	assert.Equal(t, int64(2), st.Snapshot().DistinctUsers)
 }
 
-func TestRecord_IgnoresEmptyUser(t *testing.T) {
+// Apply does no filtering: whatever Subscriber.aggregate put in the Delta is counted.
+// That is the contract, not an oversight — a fold carries no per-event context — and
+// it is why aggregate is the one that drops an empty username.
+func TestApply_DoesNotFilterEmptyUsername(t *testing.T) {
 	st := stats.New()
 
-	st.Record(newEvent("", false, "https://en.wikipedia.org"))
+	st.Apply(statsmodels.Delta{Messages: 1, Users: []string{""}})
 
-	assert.Equal(t, int64(0), st.Snapshot().DistinctUsers)
+	assert.Equal(t, int64(1), st.Snapshot().DistinctUsers)
 }
 
-func TestRecord_SeparatesBotAndHumanEdits(t *testing.T) {
+func TestApply_SeparatesBotAndHumanEdits(t *testing.T) {
 	st := stats.New()
 
-	st.Record(newEvent("human1", false, "https://en.wikipedia.org"))
-	st.Record(newEvent("human2", false, "https://en.wikipedia.org"))
-	st.Record(newEvent("bot1", true, "https://en.wikipedia.org"))
+	st.Apply(statsmodels.Delta{Messages: 2, HumanEdits: 2})
+	st.Apply(statsmodels.Delta{Messages: 1, BotEdits: 1})
 
 	snap := st.Snapshot()
 	assert.Equal(t, int64(2), snap.HumanEdits)
 	assert.Equal(t, int64(1), snap.BotEdits)
 }
 
-func TestRecord_CountsByServerURL(t *testing.T) {
+// The en.wikipedia key appears in both Deltas, so this also covers the merge rather
+// than a plain overwrite.
+func TestApply_SumsByServerURL(t *testing.T) {
 	st := stats.New()
 
-	st.Record(newEvent("iryna", false, "https://en.wikipedia.org"))
-	st.Record(newEvent("john", false, "https://en.wikipedia.org"))
-	st.Record(newEvent("carol", false, "https://commons.wikimedia.org"))
+	st.Apply(statsmodels.Delta{Messages: 1, ByServerURL: map[string]int64{enWiki: 1}})
+	st.Apply(statsmodels.Delta{Messages: 2, ByServerURL: map[string]int64{
+		enWiki:                          1,
+		"https://commons.wikimedia.org": 1,
+	}})
 
 	snap := st.Snapshot()
-	assert.Equal(t, int64(2), snap.ByServerURL["https://en.wikipedia.org"])
+	assert.Equal(t, int64(2), snap.ByServerURL[enWiki])
 	assert.Equal(t, int64(1), snap.ByServerURL["https://commons.wikimedia.org"])
 }
 
-func TestRecord_IgnoresEmptyServerURL(t *testing.T) {
+// Same contract as the empty username: aggregate filters, Apply sums what it is given.
+func TestApply_DoesNotFilterEmptyServerURL(t *testing.T) {
 	st := stats.New()
 
-	st.Record(newEvent("iryna", false, ""))
+	st.Apply(statsmodels.Delta{Messages: 1, ByServerURL: map[string]int64{"": 1}})
 
-	assert.Empty(t, st.Snapshot().ByServerURL)
+	assert.Equal(t, int64(1), st.Snapshot().ByServerURL[""])
 }
 
 func TestSnapshot_IsDeepCopy(t *testing.T) {
 	st := stats.New()
-	st.Record(newEvent("iryna", false, "https://en.wikipedia.org"))
+	st.Apply(statsmodels.Delta{Messages: 1, ByServerURL: map[string]int64{enWiki: 1}})
 
 	snap := st.Snapshot()
 	// changing the returned map must not change the stats themselves
-	snap.ByServerURL["https://en.wikipedia.org"] = 999
+	snap.ByServerURL[enWiki] = 999
 
 	fresh := st.Snapshot()
-	assert.Equal(t, int64(1), fresh.ByServerURL["https://en.wikipedia.org"],
+	assert.Equal(t, int64(1), fresh.ByServerURL[enWiki],
 		"Snapshot did not return a deep copy — internal map was mutated")
 }
 
-func TestRecord_ConcurrentSafety(t *testing.T) {
+func TestApply_ConcurrentSafety(t *testing.T) {
 	st := stats.New()
 	var wg sync.WaitGroup
 	const goroutines = 100
@@ -115,10 +113,19 @@ func TestRecord_ConcurrentSafety(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			st.Record(newEvent("user", i%2 == 0, "https://en.wikipedia.org"))
+			st.Apply(statsmodels.Delta{
+				Messages:    1,
+				BotEdits:    int64(i % 2),
+				HumanEdits:  int64(1 - i%2),
+				Users:       []string{"user"},
+				ByServerURL: map[string]int64{enWiki: 1},
+			})
 		}(i)
 	}
 	wg.Wait()
 
-	assert.Equal(t, int64(goroutines), st.Snapshot().TotalMessages)
+	snap := st.Snapshot()
+	assert.Equal(t, int64(goroutines), snap.TotalMessages)
+	assert.Equal(t, int64(goroutines), snap.BotEdits+snap.HumanEdits)
+	assert.Equal(t, int64(goroutines), snap.ByServerURL[enWiki])
 }

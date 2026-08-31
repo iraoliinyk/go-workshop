@@ -12,15 +12,21 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-const (
-	maxBatchSize   = 100
-	maxPollRecords = 1000
-)
+// defaultDrainGrace keeps a zero-value config working: a drain on an already-expired
+// context would fail its write and replay the poll, which is the thing the drain exists
+// to avoid.
+const defaultDrainGrace = 5 * time.Second
 
 type SubscriberConfig struct {
-	Brokers []string
-	Topic   string
-	Group   string
+	Brokers        []string
+	Topic          string
+	Group          string
+	FetchMinBytes  int32
+	FetchMaxWait   time.Duration
+	MaxPollRecords int
+	// DrainGrace bounds the work after the shutdown signal: one write and one commit
+	// for the poll already in hand. It must fit inside the runner's shutdown budget.
+	DrainGrace time.Duration
 }
 
 type Subscriber struct {
@@ -30,6 +36,7 @@ type Subscriber struct {
 	dec    Decoder
 	writer DeltaWriter
 	obs    BatchObserver
+	cfg    SubscriberConfig
 }
 
 func NewSubscriber(cfg SubscriberConfig, log applog.Logger, stats Recorder,
@@ -39,6 +46,8 @@ func NewSubscriber(cfg SubscriberConfig, log applog.Logger, stats Recorder,
 		kgo.ClientID("wiki-consumer"),
 		kgo.ConsumeTopics(cfg.Topic),
 		kgo.ConsumerGroup(cfg.Group),
+		kgo.FetchMinBytes(cfg.FetchMinBytes),
+		kgo.FetchMaxWait(cfg.FetchMaxWait),
 		kgo.DisableAutoCommit(),
 		kgo.BlockRebalanceOnPoll(),
 	)
@@ -46,15 +55,18 @@ func NewSubscriber(cfg SubscriberConfig, log applog.Logger, stats Recorder,
 		return nil, &apperrors.ConsumeError{Err: err}
 	}
 
-	return NewSubscriberWithClient(client, log, stats, dec, w, obs), nil
+	return NewSubscriberWithClient(client, log, stats, dec, w, obs, cfg), nil
 }
 
 // NewSubscriberWithClient builds a Subscriber on a poller the caller already has.
 // NewSubscriber is the normal path; this is the seam that lets a caller supply its
 // own client, which is how the tests reach the poll loop without a live broker.
 func NewSubscriberWithClient(client RecordPoller, log applog.Logger, stats Recorder, dec Decoder,
-	writer DeltaWriter, obs BatchObserver) *Subscriber {
-	return &Subscriber{client: client, log: log, stats: stats, dec: dec, writer: writer, obs: obs}
+	writer DeltaWriter, obs BatchObserver, cfg SubscriberConfig) *Subscriber {
+	if cfg.DrainGrace <= 0 {
+		cfg.DrainGrace = defaultDrainGrace
+	}
+	return &Subscriber{client: client, log: log, stats: stats, dec: dec, writer: writer, obs: obs, cfg: cfg}
 }
 
 // Connect checks that the broker answers.
@@ -67,12 +79,13 @@ func (s *Subscriber) Connect(ctx context.Context) error {
 
 func (s *Subscriber) Run(ctx context.Context) error {
 	for {
+		// The one place a shutdown leaves the loop: before a new fetch starts. Records
+		// already in hand are drained below instead of dropped.
 		if ctxDone(ctx) {
 			return nil
 		}
-		fetches := s.client.PollRecords(ctx, maxPollRecords)
-		// A poll can return records and a cancelled context at the same time.
-		if fetches.IsClientClosed() || ctxDone(ctx) {
+		fetches := s.client.PollRecords(ctx, s.cfg.MaxPollRecords)
+		if fetches.IsClientClosed() {
 			return nil // graceful stop, not a failure
 		}
 		for _, e := range fetches.Errors() {
@@ -81,27 +94,55 @@ func (s *Subscriber) Run(ctx context.Context) error {
 
 		records := fetches.Records()
 		if len(records) == 0 {
+			// Nothing fetched, so there is nothing to drain. Leaving without
+			// AllowRebalance is safe here: Close uses CloseAllowingRebalance.
+			if ctxDone(ctx) {
+				return nil
+			}
 			s.client.AllowRebalance()
 			continue
 		}
 
-		deltas := s.aggregate(records) // one Delta per partition
-		// Durable before acknowledged. A failed write must replay the poll, never commit it.
-		if err := s.writer.AddDeltas(ctx, deltas); err != nil {
-			s.log.AppErrorf(err, "delta write failed, replaying poll")
+		if !ctxDone(ctx) {
+			s.handlePoll(ctx, records)
 			s.client.AllowRebalance()
 			continue
 		}
 
-		if err := s.client.CommitRecords(ctx, records...); err != nil {
-			s.log.AppErrorf(err, "commit failed")
-		}
+		// A poll can return records and a cancelled context at the same time. These
+		// records are already fetched, so returning here would replay a whole poll on
+		// every shutdown. Finish them on a context that is not cancelled — the same
+		// trick flusher.Run uses for its last snapshot — bounded by DrainGrace so a
+		// stuck write cannot hold the process open.
+		drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.DrainGrace)
+		s.log.Debugf("draining %d records on shutdown", len(records))
+		s.handlePoll(drainCtx, records)
+		cancel()
 
-		// After the commit, so the in-memory view only ever holds committed data.
-		for _, d := range deltas {
-			s.stats.Apply(d)
-		}
 		s.client.AllowRebalance()
+		return nil
+	}
+}
+
+// handlePoll turns one poll into one durable write, one commit and one in-memory
+// update. The order is the design: durable before acknowledged, acknowledged before
+// visible. A failed write returns without committing, so the poll replays.
+func (s *Subscriber) handlePoll(ctx context.Context, records []*kgo.Record) {
+	deltas := s.aggregate(records) // one Delta per partition
+
+	// Durable before acknowledged. A failed write must replay the poll, never commit it.
+	if err := s.writer.AddDeltas(ctx, deltas); err != nil {
+		s.log.AppErrorf(err, "delta write failed, replaying poll")
+		return
+	}
+
+	if err := s.client.CommitRecords(ctx, records...); err != nil {
+		s.log.AppErrorf(err, "commit failed")
+	}
+
+	// After the commit, so the in-memory view only ever holds committed data.
+	for _, d := range deltas {
+		s.stats.Apply(d)
 	}
 }
 
@@ -151,8 +192,15 @@ func (s *Subscriber) aggregate(records []*kgo.Record) []statsmodels.Delta {
 		} else {
 			agg.HumanEdits++
 		}
-		agg.Users = append(agg.Users, event.User)
-		agg.ByServerURL[event.ServerURL]++
+		// Empty is not a value, it is a missing field. Counting it would add a phantom
+		// distinct user and an empty-string row to the per-server breakdown. Stats.Apply
+		// takes a fold and cannot tell the difference, so the guard has to be here.
+		if event.User != "" {
+			agg.Users = append(agg.Users, event.User)
+		}
+		if event.ServerURL != "" {
+			agg.ByServerURL[event.ServerURL]++
+		}
 		s.obs.Processed()
 	}
 

@@ -36,22 +36,11 @@ func (s *StatsStore) SaveSnapshot(_ context.Context, at time.Time, snap statsmod
 	return nil
 }
 
-// Series returns the points between from and to, both included. The day argument
-// only matters to Cassandra, so it is ignored here: the range decides the result.
-func (s *StatsStore) Series(_ context.Context, _ /* day */ time.Time, from, to time.Time) ([]statsmodels.SnapshotPoint, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var out []statsmodels.SnapshotPoint
-	for _, p := range s.points {
-		if !p.At.Before(from) && !p.At.After(to) { // from <= p.At <= to
-			out = append(out, p)
-		}
-	}
-	return out, nil
-}
-
 // Totals mirrors Cassandra sums one day of deltas.
 func (s *StatsStore) Totals(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) {
+	// todo-ch-8: same cost as the Cassandra SUM, for the same reason — this walks every
+	// delta ever stored, not just the day asked for. Harmless while only tests write
+	// here; key the map by day if a test ever spans more than one.
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

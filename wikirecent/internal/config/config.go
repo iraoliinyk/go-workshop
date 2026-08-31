@@ -40,10 +40,15 @@ type Consumer struct {
 	AccessTokenTTL time.Duration `env:"ACCESS_TOKEN_TTL" envDefault:"1h"`
 	BcryptCost     int           `env:"BCRYPT_COST"      envDefault:"12"`
 
+	MaxPartitions int32 `env:"REDPANDA_PARTITIONS" envDefault:"3"`
+
 	ConsumerWorkers int           `env:"CONSUMER_WORKERS" envDefault:"3"`
 	MaxPollRecords  int           `env:"MAX_POLL_RECORDS" envDefault:"1000"`
 	FetchMinBytes   int32         `env:"FETCH_MIN_BYTES"  envDefault:"10240"` // 10KB
 	FetchMaxWait    time.Duration `env:"FETCH_MAX_WAIT"   envDefault:"100ms"`
+	// Must leave room for STATS_FLUSH shutdown inside cmd/consumer's shutdownTimeout:
+	// the workers drain in parallel, then the last snapshot save follows.
+	ConsumerDrainGrace time.Duration `env:"CONSUMER_DRAIN_GRACE" envDefault:"5s"`
 }
 
 func LoadProducer() (Producer, error) {

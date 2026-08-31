@@ -20,6 +20,29 @@ import (
 
 const validEvent = `{"user":"iryna","bot":false,"server_url":"https://ca.wikipedia.org"}`
 
+// testMaxPollRecords is matched exactly in every PollRecords expectation, so a config
+// that never reaches the Subscriber shows up here as a failed expectation. franz-go
+// reads 0 as "no limit", which is why a dropped config would otherwise be silent.
+const testMaxPollRecords = 500
+
+func testConfig() broker.SubscriberConfig {
+	return broker.SubscriberConfig{MaxPollRecords: testMaxPollRecords}
+}
+
+// scriptPolls returns each fetch once, in order, and cancels the context on every
+// poll after that, so Run leaves through its own graceful-stop path instead of
+// spinning.
+func scriptPolls(poller *MockRecordPoller, cancel context.CancelFunc, fetches ...kgo.Fetches) {
+	for _, f := range fetches {
+		poller.EXPECT().PollRecords(gomock.Any(), testMaxPollRecords).Return(f)
+	}
+	poller.EXPECT().PollRecords(gomock.Any(), testMaxPollRecords).
+		DoAndReturn(func(context.Context, int) kgo.Fetches {
+			cancel()
+			return nil
+		}).AnyTimes()
+}
+
 // testEnv wires a Subscriber onto the generated mocks, with no broker behind it.
 // Expectations are declared per test; anything not expected fails the test.
 type testEnv struct {
@@ -29,6 +52,7 @@ type testEnv struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	dec    *MockDecoder
+	writer *MockDeltaWriter
 	obs    *MockBatchObserver
 }
 
@@ -45,6 +69,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		ctx:    ctx,
 		cancel: cancel,
 		dec:    NewMockDecoder(ctrl),
+		writer: NewMockDeltaWriter(ctrl),
 		obs:    NewMockBatchObserver(ctrl),
 	}
 
@@ -52,22 +77,19 @@ func newTestEnv(t *testing.T) *testEnv {
 	env.obs.EXPECT().Processed().AnyTimes()
 	env.obs.EXPECT().Failed().AnyTimes()
 
-	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats, env.dec, env.obs)
+	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats, env.dec,
+		env.writer, env.obs, testConfig())
 	return env
 }
 
-// expectPolls scripts the poll loop: each fetch is returned once, in order, and
-// every poll after that cancels the context so Run leaves through its own
-// graceful-stop path instead of spinning.
 func (env *testEnv) expectPolls(fetches ...kgo.Fetches) {
-	for _, f := range fetches {
-		env.poller.EXPECT().PollRecords(gomock.Any(), gomock.Any()).Return(f)
-	}
-	env.poller.EXPECT().PollRecords(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(context.Context, int) kgo.Fetches {
-			env.cancel()
-			return nil
-		}).AnyTimes()
+	scriptPolls(env.poller, env.cancel, fetches...)
+}
+
+// expectWrites lets every delta write succeed. The test about a failed write sets its
+// own expectation instead, because an AnyTimes stub declared here would match first.
+func (env *testEnv) expectWrites() {
+	env.writer.EXPECT().AddDeltas(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 }
 
 func (env *testEnv) expectDecodes(n int) {
@@ -76,8 +98,8 @@ func (env *testEnv) expectDecodes(n int) {
 		Times(n)
 }
 
-// The topic has 3 partitions. Fixtures name a partition explicitly, because the
-// per-partition fan-out is one of the two things under test.
+// The topic has 3 partitions. Fixtures name a partition explicitly, because one Delta
+// per partition is one of the two things under test.
 const testTopic = "wiki"
 
 // makeRecords builds count records on one partition, starting at firstOffset.
@@ -121,7 +143,9 @@ func TestRun_CommitsOnceWithEveryRecordOfThePoll(t *testing.T) {
 			return nil
 		}).Times(1)
 	env.poller.EXPECT().AllowRebalance().Times(1)
-	env.stats.EXPECT().Record(gomock.Any()).Times(5)
+	// Two partitions in the poll, so two Deltas — not one per record.
+	env.stats.EXPECT().Apply(gomock.Any()).Times(2)
+	env.expectWrites()
 	env.expectDecodes(5)
 
 	require.NoError(t, env.sub.Run(env.ctx))
@@ -150,7 +174,8 @@ func TestRun_CommitFailureIsLoggedAndTheLoopContinues(t *testing.T) {
 	env.poller.EXPECT().CommitRecords(gomock.Any(), gomock.Any()).
 		Return(errors.New("commit boom")).Times(2)
 	env.poller.EXPECT().AllowRebalance().Times(2)
-	env.stats.EXPECT().Record(gomock.Any()).Times(4)
+	env.stats.EXPECT().Apply(gomock.Any()).Times(2)
+	env.expectWrites()
 	env.expectDecodes(4)
 
 	require.NoError(t, env.sub.Run(env.ctx))
@@ -165,9 +190,9 @@ func TestRun_FetchErrorCommitsNothing(t *testing.T) {
 	env := newTestEnv(t)
 	env.expectPolls(broken)
 
-	// No CommitRecords and no Record expectation: either call fails the test. An
-	// error-only fetch carries no records, so there is nothing to run and nothing to
-	// acknowledge. AllowRebalance must still pair with the poll.
+	// No CommitRecords, no AddDeltas and no Apply expectation: any of those calls
+	// fails the test. An error-only fetch carries no records, so there is nothing to
+	// aggregate and nothing to acknowledge. AllowRebalance must still pair with the poll.
 	env.poller.EXPECT().AllowRebalance().Times(1)
 
 	require.NoError(t, env.sub.Run(env.ctx))
@@ -191,7 +216,9 @@ func TestRun_EmptyPartitionsWithinAPollAreHarmless(t *testing.T) {
 		partOf(2, nil),
 	))
 
-	env.stats.EXPECT().Record(gomock.Any()).Times(2)
+	// One Delta, not three: a partition with no records produces none.
+	env.stats.EXPECT().Apply(gomock.Any()).Times(1)
+	env.expectWrites()
 	env.expectDecodes(2)
 	env.poller.EXPECT().CommitRecords(gomock.Any(), gomock.Any()).Return(nil).Times(1)
 	env.poller.EXPECT().AllowRebalance().Times(1)
@@ -207,14 +234,15 @@ func TestRun_SkipsBadRecordAndStillCommitsThePoll(t *testing.T) {
 	env := newTestEnv(t)
 	env.expectPolls(fetchOf(partOf(0, batch)))
 
-	// Exactly 2 of the 3 records may reach the recorder. The commit still happens:
+	// Exactly 2 of the 3 records reach the Delta counters. The commit still happens:
 	// a record that can never be decoded must not hold up its partition.
 	env.dec.EXPECT().Decode(bad).
 		Return(events.WikiEvent{}, errors.New("bad payload")).Times(1)
 	env.dec.EXPECT().Decode(gomock.Not(gomock.Eq(bad))).
 		Return(events.WikiEvent{User: "iryna", ServerURL: "https://ca.wikipedia.org"}, nil).Times(2)
 
-	env.stats.EXPECT().Record(gomock.Any()).Times(2)
+	env.stats.EXPECT().Apply(gomock.Any()).Times(1)
+	env.expectWrites()
 	env.poller.EXPECT().CommitRecords(gomock.Any(), gomock.Any()).Return(nil).Times(1)
 	env.poller.EXPECT().AllowRebalance().Times(1)
 
@@ -227,16 +255,16 @@ func TestRun_ReturnsNilOnShutdown(t *testing.T) {
 	require.NoError(t, env.sub.Run(env.ctx))
 }
 
-func TestRun_ShutdownMidBatchCommitsNothing(t *testing.T) {
+func TestRun_WriteFailureCommitsNothing(t *testing.T) {
 	env := newTestEnv(t)
 	env.expectPolls(fetchOf(partOf(0, makeRecords(0, 0, 3))))
 
-	// Cancelling from inside Record is what puts the shutdown in the middle of the
-	// batch. No CommitRecords expectation: a commit here would acknowledge records
-	// whose batch never finished.
+	// No CommitRecords and no Apply expectation: either call fails the test. An offset
+	// must never be acknowledged while its Delta is not durable, and the in-memory view
+	// must not show a poll that was never written.
+	env.writer.EXPECT().AddDeltas(gomock.Any(), gomock.Any()).
+		Return(errors.New("write boom")).Times(1)
 	env.expectDecodes(3)
-	env.stats.EXPECT().Record(gomock.Any()).Times(3).
-		Do(func(events.WikiEvent) { env.cancel() })
 	env.poller.EXPECT().AllowRebalance().Times(1)
 
 	require.NoError(t, env.sub.Run(env.ctx))
@@ -247,7 +275,8 @@ func TestClose_AllowsRebalance(t *testing.T) {
 	poller := NewMockRecordPoller(ctrl)
 	dec := NewMockDecoder(ctrl)
 	obs := NewMockBatchObserver(ctrl)
-	sub := broker.NewSubscriberWithClient(poller, applog.Logger{}, NewMockRecorder(ctrl), dec, obs)
+	sub := broker.NewSubscriberWithClient(poller, applog.Logger{}, NewMockRecorder(ctrl), dec,
+		NewMockDeltaWriter(ctrl), obs, testConfig())
 
 	// Plain Close would hang after a poll that never allowed a rebalance.
 	poller.EXPECT().CloseAllowingRebalance().Times(1)
@@ -262,22 +291,45 @@ type countedEnv struct {
 	poller   *MockRecordPoller
 	dec      *MockDecoder
 	stats    *MockRecorder
+	writer   *MockDeltaWriter
 	counters *metrics.Events
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 func newCountedEnv(t *testing.T) *countedEnv {
 	t.Helper()
 	ctrl := gomock.NewController(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	counters := metrics.NewEvents(prometheus.NewRegistry())
 	env := &countedEnv{
 		poller:   NewMockRecordPoller(ctrl),
 		dec:      NewMockDecoder(ctrl),
 		stats:    NewMockRecorder(ctrl),
+		writer:   NewMockDeltaWriter(ctrl),
 		counters: counters,
+		ctx:      ctx,
+		cancel:   cancel,
 	}
+
+	// These tests assert the Prometheus counters. Everything the poll loop does around
+	// them is allowed but not counted, so the assertions stay about the numbers.
+	env.stats.EXPECT().Apply(gomock.Any()).AnyTimes()
+	env.writer.EXPECT().AddDeltas(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	env.poller.EXPECT().CommitRecords(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	env.poller.EXPECT().AllowRebalance().AnyTimes()
+
 	env.sub = broker.NewSubscriberWithClient(env.poller, applog.Logger{}, env.stats, env.dec,
-		metrics.NewBatchCounters(counters.ConsumedFromRedpanda, counters.Processed, counters.Failed))
+		env.writer,
+		metrics.NewBatchCounters(counters.ConsumedFromRedpanda, counters.Processed, counters.Failed),
+		testConfig())
 	return env
+}
+
+func (env *countedEnv) expectPolls(fetches ...kgo.Fetches) {
+	scriptPolls(env.poller, env.cancel, fetches...)
 }
 
 func (env *countedEnv) expectDecodeMix(bad, good int) []byte {
@@ -289,17 +341,17 @@ func (env *countedEnv) expectDecodeMix(bad, good int) []byte {
 	if good > 0 {
 		env.dec.EXPECT().Decode(gomock.Not(gomock.Eq(badPayload))).
 			Return(events.WikiEvent{User: "iryna", ServerURL: "https://ca.wikipedia.org"}, nil).Times(good)
-		env.stats.EXPECT().Record(gomock.Any()).Times(good)
 	}
 	return badPayload
 }
 
-func TestHandleBatch_CountsConsumedProcessedAndFailed(t *testing.T) {
+func TestRun_CountsConsumedProcessedAndFailed(t *testing.T) {
 	env := newCountedEnv(t)
 	batch := makeRecords(0, 0, 3)
 	batch[1].Value = env.expectDecodeMix(1, 2)
+	env.expectPolls(fetchOf(partOf(0, batch)))
 
-	require.NoError(t, env.sub.HandleBatch(context.Background(), batch))
+	require.NoError(t, env.sub.Run(env.ctx))
 
 	assert.Equal(t, 3.0, testutil.ToFloat64(env.counters.ConsumedFromRedpanda))
 	assert.Equal(t, 2.0, testutil.ToFloat64(env.counters.Processed))
@@ -308,7 +360,7 @@ func TestHandleBatch_CountsConsumedProcessedAndFailed(t *testing.T) {
 
 // The dashboard draws consumed and processed on one chart and reads the distance
 // between them as the failure rate. A lost record makes that chart lie silently.
-func TestHandleBatch_KeepsConsumedEqualToProcessedPlusFailed(t *testing.T) {
+func TestRun_KeepsConsumedEqualToProcessedPlusFailed(t *testing.T) {
 	tests := []struct {
 		name string
 		size int
@@ -333,8 +385,9 @@ func TestHandleBatch_KeepsConsumedEqualToProcessedPlusFailed(t *testing.T) {
 			for _, i := range tt.bad {
 				batch[i].Value = badPayload
 			}
+			env.expectPolls(fetchOf(partOf(0, batch)))
 
-			require.NoError(t, env.sub.HandleBatch(context.Background(), batch))
+			require.NoError(t, env.sub.Run(env.ctx))
 
 			consumed := testutil.ToFloat64(env.counters.ConsumedFromRedpanda)
 			processed := testutil.ToFloat64(env.counters.Processed)
@@ -348,33 +401,23 @@ func TestHandleBatch_KeepsConsumedEqualToProcessedPlusFailed(t *testing.T) {
 	}
 }
 
-// Only meaningful under -race: it is what proves the counters are safe for the
-// concurrent HandleBatch goroutines Run fans out.
-func TestRun_CountsAcrossConcurrentSubBatches(t *testing.T) {
+// One poll spanning every partition of the topic. Consumed is counted once for the
+// whole poll, while Processed is counted per record, so the two only agree if the
+// per-partition fold visits every record exactly once.
+func TestRun_CountsEveryPartitionOfOnePoll(t *testing.T) {
 	env := newCountedEnv(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 
-	// Over maxBatchSize (100), so each partition splits in two: six sub-batches.
 	const perPartition = 150
 	total := 3 * perPartition
 
-	env.poller.EXPECT().PollRecords(gomock.Any(), gomock.Any()).Return(fetchOf(
+	env.expectPolls(fetchOf(
 		partOf(0, makeRecords(0, 0, perPartition)),
 		partOf(1, makeRecords(1, 0, perPartition)),
 		partOf(2, makeRecords(2, 0, perPartition)),
 	))
-	env.poller.EXPECT().PollRecords(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(context.Context, int) kgo.Fetches {
-			cancel()
-			return nil
-		}).AnyTimes()
-
 	env.expectDecodeMix(0, total)
-	env.poller.EXPECT().CommitRecords(gomock.Any(), gomock.Any()).Return(nil).Times(1)
-	env.poller.EXPECT().AllowRebalance().Times(1)
 
-	require.NoError(t, env.sub.Run(ctx))
+	require.NoError(t, env.sub.Run(env.ctx))
 
 	assert.Equal(t, float64(total), testutil.ToFloat64(env.counters.ConsumedFromRedpanda))
 	assert.Equal(t, float64(total), testutil.ToFloat64(env.counters.Processed))

@@ -3,14 +3,17 @@ package broker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
+	"wikirecent/internal/apperrors"
 	"wikirecent/internal/applog"
 )
 
 type PoolConfig struct {
-	SubscriberConfig // Brokers, Topic, Group — every worker joins the same group
+	SubscriberConfig // every worker joins the same group with the same fetch settings
 	Workers          int
+	MaxPartitions    int32
 }
 
 type Pool struct {
@@ -20,8 +23,31 @@ type Pool struct {
 
 func NewPool(cfg PoolConfig, log applog.Logger, stats Recorder,
 	dec Decoder, w DeltaWriter, obs BatchObserver) (*Pool, error) {
-	p := &Pool{subs: make([]*Subscriber, 0, cfg.Workers), log: log}
-	for i := range cfg.Workers {
+
+	if cfg.Workers <= 0 {
+		return nil, &apperrors.ConfigError{
+			Err: fmt.Errorf("broker: workers must be positive, got %d", cfg.Workers),
+		}
+	}
+	if cfg.MaxPartitions <= 0 {
+		return nil, &apperrors.ConfigError{
+			Err: fmt.Errorf("broker: max partitions must be positive, got %d", cfg.MaxPartitions),
+		}
+	}
+
+	// Capped, not rejected: fewer workers than partitions is a valid choice, and each
+	// one simply takes more than one partition. A member beyond the partition count is
+	// the broken case — it never gets an assignment and only slows rebalancing down.
+	workers := cfg.Workers
+	if partitions := int(cfg.MaxPartitions); workers > partitions {
+		log.Warnf("broker: capping workers from %d to the %d partitions of topic %q",
+			workers, partitions, cfg.Topic)
+		workers = partitions
+	}
+
+	p := &Pool{subs: make([]*Subscriber, 0, workers), log: log}
+
+	for i := range workers {
 		sub, err := NewSubscriber(cfg.SubscriberConfig, log.With("worker", i), stats, dec, w, obs)
 		if err != nil {
 			_ = p.Close(context.Background()) // do not leak the ones already built

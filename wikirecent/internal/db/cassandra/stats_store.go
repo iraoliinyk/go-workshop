@@ -51,25 +51,11 @@ func (s *StatsStore) SaveSnapshot(ctx context.Context, at time.Time, snap statsm
 	return nil
 }
 
-// Series reads one day partition and keeps the rows between from and to. This is a
-// single-partition range read, so it needs no ALLOW FILTERING and no index.
-func (s *StatsStore) Series(ctx context.Context, day, from, to time.Time) ([]statsmodels.SnapshotPoint, error) {
-	const q = `SELECT snapshot_ts, total_messages, bot_edits, human_edits, distinct_users
-		FROM stats_snapshot WHERE day = ? AND snapshot_ts >= ? AND snapshot_ts <= ?`
-	iter := s.sess.Query(q, day.UTC(), from.UTC(), to.UTC()).IterContext(ctx)
-
-	var out []statsmodels.SnapshotPoint
-	var p statsmodels.SnapshotPoint
-	for iter.Scan(&p.At, &p.TotalMessages, &p.BotEdits, &p.HumanEdits, &p.DistinctUsers) {
-		out = append(out, p)
-	}
-	if err := iter.Close(); err != nil {
-		return nil, &apperrors.RepositoryError{Err: err}
-	}
-	return out, nil
-}
-
 func (s *StatsStore) Totals(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) {
+	// todo-ch-8: single-partition is not the same as small. SUM reads every row in the
+	// day partition, and stats_delta gets one row per poll per Kafka partition, so a busy
+	// day is millions of rows in this one read. The fix is a running-total row per day,
+	// not a bigger timeout. Failing here only costs a start from zero, so it can wait.
 	const q = `SELECT SUM(total_messages), SUM(bot_edits), SUM(human_edits)
 		FROM stats_delta WHERE day = ?`
 

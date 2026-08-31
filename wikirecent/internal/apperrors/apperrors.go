@@ -168,3 +168,15 @@ func (e *ConsumeError) Error() string {
 func (e *ConsumeError) Code() string { return "CONSUME_ERROR" }
 
 func (e *ConsumeError) Unwrap() error { return e.Err }
+
+type ConfigError struct {
+	Err error
+}
+
+func (e *ConfigError) Error() string {
+	return fmt.Sprintf("ConfigError: %v", e.Err)
+}
+
+func (e *ConfigError) Code() string { return "CONFIG_ERROR" }
+
+func (e *ConfigError) Unwrap() error { return e.Err }

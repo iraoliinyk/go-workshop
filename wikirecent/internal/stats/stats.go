@@ -3,7 +3,6 @@ package stats
 import (
 	"sync"
 	"time"
-	"wikirecent/internal/events"
 	"wikirecent/internal/stats/statsmodels"
 )
 
@@ -47,29 +46,6 @@ func (s *Stats) Seed(snap statsmodels.Snapshot) {
 	s.totalMessages = snap.TotalMessages
 	s.botEdits = snap.BotEdits
 	s.humanEdits = snap.HumanEdits
-}
-
-func (s *Stats) Record(event events.WikiEvent) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.totalMessages++
-
-	if event.User != "" {
-		s.users[event.User] = struct{}{}
-	}
-
-	if event.Bot {
-		s.botEdits++
-	} else {
-		s.humanEdits++
-	}
-
-	if event.ServerURL != "" {
-		s.byServerURL[event.ServerURL]++
-	}
-
-	s.lastEvent = time.Now()
 }
 
 func (s *Stats) Snapshot() statsmodels.Snapshot {
