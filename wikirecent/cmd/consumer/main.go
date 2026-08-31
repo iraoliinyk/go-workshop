@@ -69,9 +69,9 @@ func main() {
 		log.Fatalf("flusher: %v", err)
 	}
 
-	flushDone := make(chan struct{})
+	poolDone := make(chan struct{})
 	go func() {
-		defer close(flushDone)
+		defer close(poolDone)
 		if err := snapshotFlusher.Run(ctx); err != nil {
 			logger.AppErrorf(err, "flusher stopped")
 		}
@@ -86,11 +86,26 @@ func main() {
 		eventMetrics.Failed,
 	)
 
-	sub, err := broker.NewSubscriber(broker.SubscriberConfig{
+	subscriberConfig := broker.SubscriberConfig{
 		Brokers: cfg.Brokers,
 		Topic:   cfg.Topic,
 		Group:   cfg.Group,
-	}, logger, liveStats, codec.EventDecoder{}, batchObserver)
+	}
+
+	totals, err := stores.Stats.Totals(ctx, time.Now().UTC())
+	if err != nil {
+		logger.AppErrorf(err, "could not restore totals, starting from zero")
+	} else {
+		liveStats.Seed(totals)
+	}
+
+	sub, err := broker.NewSubscriber(subscriberConfig, logger, liveStats, codec.EventDecoder{}, stores.Stats, batchObserver)
+
+	pool, err := broker.NewPool(broker.PoolConfig{
+		SubscriberConfig: subscriberConfig,
+		Workers:          cfg.ConsumerWorkers,
+	}, logger, liveStats, codec.EventDecoder{}, stores.Stats, batchObserver)
+
 	if err != nil {
 		log.Fatalf("broker: %v", err)
 	}
@@ -111,8 +126,8 @@ func main() {
 	runner, err := lifecycle.New(lifecycle.Config{
 		Addr:            ":" + strconv.Itoa(cfg.Port),
 		Handler:         api.Router(),
-		Startup:         startup(logger, sub),
-		Shutdown:        shutdown(logger, sub, flushDone),
+		Startup:         startup(logger, pool, poolDone),
+		Shutdown:        shutdown(logger, sub, pool, poolDone),
 		ShutdownTimeout: shutdownTimeout,
 		Log:             logger,
 	})
@@ -125,14 +140,15 @@ func main() {
 }
 
 // startup pings the broker, then runs the poll loop in its own goroutine.
-func startup(logger applog.Logger, sub *broker.Subscriber) lifecycle.Hook {
+func startup(logger applog.Logger, pool *broker.Pool, poolDone chan struct{}) lifecycle.Hook {
 	return func(ctx context.Context) error {
-		if err := sub.Connect(ctx); err != nil {
+		if err := pool.Connect(ctx); err != nil {
 			return err
 		}
 		go func() {
-			if err := sub.Run(ctx); err != nil {
-				logger.AppErrorf(err, "subscription ended")
+			defer close(poolDone)
+			if err := pool.Run(ctx); err != nil {
+				logger.AppErrorf(err, "consumer pool stopped")
 			}
 		}()
 		return nil
@@ -140,19 +156,20 @@ func startup(logger applog.Logger, sub *broker.Subscriber) lifecycle.Hook {
 }
 
 // shutdown unwinds what the runner does not own.
-func shutdown(logger applog.Logger, sub *broker.Subscriber, flushDone <-chan struct{}) lifecycle.Hook {
+func shutdown(logger applog.Logger, sub *broker.Subscriber, pool *broker.Pool, poolDone <-chan struct{}) lifecycle.Hook {
 	return func(ctx context.Context) error {
 		if err := sub.Close(ctx); err != nil {
 			logger.AppErrorf(err, "subscriber close failed")
 		}
-
-		// The signal already cancelled the flusher's context, so its final save is
-		// running now. Wait for it, but inside the runner's budget: a hung
-		// SaveSnapshot must not hold the process open past ShutdownTimeout.
+		// Wait for the workers to leave their poll loops BEFORE taking their clients away,
+		// bounded by the runner's budget so a stuck worker cannot hold the process open.
 		select {
-		case <-flushDone:
+		case <-poolDone:
 		case <-ctx.Done():
-			logger.AppErrorf(ctx.Err(), "gave up waiting for the final snapshot")
+			logger.AppErrorf(ctx.Err(), "gave up waiting for the consumer pool")
+		}
+		if err := pool.Close(ctx); err != nil {
+			logger.AppErrorf(err, "pool close failed")
 		}
 		return nil
 	}

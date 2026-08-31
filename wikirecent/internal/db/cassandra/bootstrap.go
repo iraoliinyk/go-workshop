@@ -48,9 +48,15 @@ const createUserAccounts = `CREATE TABLE IF NOT EXISTS user_accounts (
 const createRevokedTokens = `CREATE TABLE IF NOT EXISTS revoked_tokens (
 	jti text PRIMARY KEY, email text, revoked_at timestamp)`
 
+const createStatsDelta = `CREATE TABLE IF NOT EXISTS stats_delta (
+	day date, partition int, end_offset bigint,
+	total_messages bigint, bot_edits bigint, human_edits bigint,
+	PRIMARY KEY ((day), partition, end_offset)
+) WITH CLUSTERING ORDER BY (partition ASC, end_offset DESC)`
+
 func bootstrapTables(ctx context.Context, sess *gocql.Session) error {
 	for _, stmt := range []string{
-		createStatsSnapshot, createServerSnapshot, createUserAccounts, createRevokedTokens,
+		createStatsSnapshot, createServerSnapshot, createUserAccounts, createRevokedTokens, createStatsDelta,
 	} {
 		if err := sess.Query(stmt).ExecContext(ctx); err != nil {
 			return fmt.Errorf("cassandra: create table: %w", err)

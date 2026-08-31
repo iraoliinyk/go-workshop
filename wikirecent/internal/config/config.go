@@ -39,6 +39,11 @@ type Consumer struct {
 	JWTIssuer      string        `env:"JWT_ISSUER"       envDefault:"wiki-stream-go"`
 	AccessTokenTTL time.Duration `env:"ACCESS_TOKEN_TTL" envDefault:"1h"`
 	BcryptCost     int           `env:"BCRYPT_COST"      envDefault:"12"`
+
+	ConsumerWorkers int           `env:"CONSUMER_WORKERS" envDefault:"3"`
+	MaxPollRecords  int           `env:"MAX_POLL_RECORDS" envDefault:"1000"`
+	FetchMinBytes   int32         `env:"FETCH_MIN_BYTES"  envDefault:"10240"` // 10KB
+	FetchMaxWait    time.Duration `env:"FETCH_MAX_WAIT"   envDefault:"100ms"`
 }
 
 func LoadProducer() (Producer, error) {

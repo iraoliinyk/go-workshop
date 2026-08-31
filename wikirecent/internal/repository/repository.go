@@ -13,9 +13,13 @@ import (
 )
 
 type StatsStore interface {
+	AddDeltas(ctx context.Context, deltas []statsmodels.Delta) error
+	Totals(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) // startup restore
+
 	// SaveSnapshot adds one point to the time series. Called by the flush
 	// ticker and once more on shutdown.
 	SaveSnapshot(ctx context.Context, at time.Time, snap statsmodels.Snapshot) error
+	// todo-ch-8: maybe removed while it is not used?
 	// Series reads points back for a day and time range. Used by tests;
 	// Grafana queries Cassandra directly.
 	Series(ctx context.Context, day, from, to time.Time) ([]statsmodels.SnapshotPoint, error)

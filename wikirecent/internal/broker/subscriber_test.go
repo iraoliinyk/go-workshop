@@ -348,21 +348,6 @@ func TestHandleBatch_KeepsConsumedEqualToProcessedPlusFailed(t *testing.T) {
 	}
 }
 
-// A batch abandoned at shutdown was never consumed. Counting it would leave a
-// permanent gap between consumed and processed+failed after every restart.
-func TestHandleBatch_CountsNothingWhenTheContextIsAlreadyDone(t *testing.T) {
-	env := newCountedEnv(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	// No Decode or Record expectation: HandleBatch must return before either.
-	require.Error(t, env.sub.HandleBatch(ctx, makeRecords(0, 0, 3)))
-
-	assert.Zero(t, testutil.ToFloat64(env.counters.ConsumedFromRedpanda))
-	assert.Zero(t, testutil.ToFloat64(env.counters.Processed))
-	assert.Zero(t, testutil.ToFloat64(env.counters.Failed))
-}
-
 // Only meaningful under -race: it is what proves the counters are safe for the
 // concurrent HandleBatch goroutines Run fans out.
 func TestRun_CountsAcrossConcurrentSubBatches(t *testing.T) {

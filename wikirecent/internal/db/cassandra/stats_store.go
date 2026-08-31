@@ -2,6 +2,7 @@ package cassandra
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"wikirecent/internal/apperrors"
@@ -25,6 +26,10 @@ const insertStatsSnapshot = `INSERT INTO stats_snapshot
 
 const insertServerSnapshot = `INSERT INTO server_snapshot
 	(server_url, day, snapshot_ts, hits) VALUES (?, ?, ?, ?)`
+
+const insertDelta = `INSERT INTO stats_delta
+	(day, partition, end_offset, total_messages, bot_edits, human_edits)
+	VALUES (?, ?, ?, ?, ?, ?)`
 
 func (s *StatsStore) SaveSnapshot(ctx context.Context, at time.Time, snap statsmodels.Snapshot) error {
 	at = at.UTC()
@@ -62,4 +67,43 @@ func (s *StatsStore) Series(ctx context.Context, day, from, to time.Time) ([]sta
 		return nil, &apperrors.RepositoryError{Err: err}
 	}
 	return out, nil
+}
+
+func (s *StatsStore) Totals(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) {
+	const q = `SELECT SUM(total_messages), SUM(bot_edits), SUM(human_edits)
+		FROM stats_delta WHERE day = ?`
+
+	d := day.UTC()
+	dayKey := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+
+	var snap statsmodels.Snapshot
+	err := s.sess.Query(q, dayKey).
+		ScanContext(ctx, &snap.TotalMessages, &snap.BotEdits, &snap.HumanEdits)
+
+	// A day with nothing written yet is not a failure. The first start of the day
+	// lands here, and zero is the correct answer.
+	if errors.Is(err, gocql.ErrNotFound) {
+		return statsmodels.Snapshot{}, nil
+	}
+	if err != nil {
+		return statsmodels.Snapshot{}, &apperrors.RepositoryError{Err: err}
+	}
+	return snap, nil
+}
+
+func (s *StatsStore) AddDeltas(ctx context.Context, deltas []statsmodels.Delta) error {
+	if len(deltas) == 0 {
+		return nil
+	}
+	// Unlogged, and every row shares the day partition key, so this is one round trip
+	// to one node — the only shape where a Cassandra batch is a saving, not a trap.
+	b := s.sess.Batch(gocql.UnloggedBatch)
+	for _, d := range deltas {
+		b.Query(insertDelta, d.Key.Day, d.Key.Partition, d.Key.EndOffset,
+			d.Messages, d.BotEdits, d.HumanEdits)
+	}
+	if err := b.ExecContext(ctx); err != nil {
+		return &apperrors.RepositoryError{Err: err}
+	}
+	return nil
 }
