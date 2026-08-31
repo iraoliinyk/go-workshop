@@ -72,8 +72,6 @@ services:
   redpanda-init:
     image: redpandadata/redpanda:v25.1.7
     entrypoint: ["/bin/sh", "-c"]
-    # -r 1: replication factor is per PARTITION, not per topic, so -p 3 -r 1
-    # -r 3 would be introduced in ch-8
     # retention.ms=86400000 is 24h. The default is 7 days, which is a lot for the workshop.
     #
     # Every line below must keep the same indentation. A `>-` block does NOT fold a
@@ -84,7 +82,7 @@ services:
     command:
       - >-
         rpk topic create ${REDPANDA_TOPIC:-wiki.recentchange.proto}
-        -p ${REDPANDA_PARTITIONS:-3}  -r {REDPANDA_REPLICAS:-1} 
+        -p ${REDPANDA_PARTITIONS:-3}  -r ${REDPANDA_REPLICAS:-1} 
         --topic-config cleanup.policy=delete
         --topic-config retention.ms=86400000
         --topic-config retention.bytes=536870912
