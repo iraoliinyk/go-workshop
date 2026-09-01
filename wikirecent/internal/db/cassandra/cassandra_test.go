@@ -41,7 +41,7 @@ func TestMain(m *testing.M) {
 	// not there. A closed port usually means compose was not started, so say so.
 	if err := waitForCQL(testHosts[0], 30*time.Second); err != nil {
 		log.Printf("integration: no Cassandra at %s: %v", testHosts[0], err)
-		log.Printf("integration: start one with `docker compose up -d cassandra`, or set CASSANDRA_HOSTS")
+		log.Printf("integration: start one with `docker compose up -d cassandra1`, or set CASSANDRA_HOSTS")
 		os.Exit(1)
 	}
 	log.Printf("integration: using cassandra at %s", strings.Join(testHosts, ","))
@@ -89,9 +89,9 @@ func itConfig(t *testing.T) cassandra.Config {
 		// testHosts is reachable, the compose peers are not: they announce container
 		// IPs. Following them costs 48s of connect timeouts per session.
 		DisablePeerDiscovery: true,
-		// QUORUM for both reads and writes. Every test depends on it: a revoked
-		// token has to be visible to the very next read.
-		Consistency: gocql.Quorum,
+		// The level the app runs at, for reads and writes both. Every test depends on
+		// it: a revoked token has to be visible to the very next read.
+		Consistency: gocql.LocalQuorum,
 		// Long, because the first CREATE TABLE on a new node is far slower than
 		// a normal query.
 		Timeout: 15 * time.Second,

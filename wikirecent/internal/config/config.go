@@ -30,20 +30,13 @@ type Consumer struct {
 	DBBackend          string        `env:"DB_BACKEND"           envDefault:"in-memory"` // cassandra | in-memory
 	StatsFlushInterval time.Duration `env:"STATS_FLUSH_INTERVAL" envDefault:"10s"`
 
-	CassandraHosts       []string      `env:"CASSANDRA_HOSTS" envSeparator:"," envDefault:"127.0.0.1"`
-	CassandraKeyspace    string        `env:"CASSANDRA_KEYSPACE"    envDefault:"wikistream"`
-	CassandraConsistency string        `env:"CASSANDRA_CONSISTENCY" envDefault:"QUORUM"`
-	CassandraTimeout     time.Duration `env:"CASSANDRA_TIMEOUT"     envDefault:"5s"`
-	// Not CASSANDRA_DC: the Cassandra image already uses that name for the node's own
-	// datacenter. Empty asks the node, which is what a single datacenter wants.
-	CassandraLocalDC string `env:"CASSANDRA_LOCAL_DC"`
-	// Must not exceed the node count, or QUORUM is unreachable and every read and
-	// write fails.
-	CassandraReplicationFactor int `env:"CASSANDRA_REPLICATION_FACTOR" envDefault:"1"`
-	// Set this when running the binary outside the compose network: only cassandra1
-	// is published, and the peers it gossips advertise container IPs that the host
-	// cannot route.
-	CassandraDisablePeerDiscovery bool `env:"CASSANDRA_DISABLE_PEER_DISCOVERY"`
+	CassandraHosts                []string      `env:"CASSANDRA_HOSTS" envSeparator:"," envDefault:"127.0.0.1"`
+	CassandraKeyspace             string        `env:"CASSANDRA_KEYSPACE"    envDefault:"wikistream"`
+	CassandraConsistency          string        `env:"CASSANDRA_CONSISTENCY" envDefault:"LOCAL_QUORUM"`
+	CassandraTimeout              time.Duration `env:"CASSANDRA_TIMEOUT"     envDefault:"5s"`
+	CassandraLocalDC              string        `env:"CASSANDRA_LOCAL_DC"`
+	CassandraReplicationFactor    int           `env:"CASSANDRA_REPLICATION_FACTOR" envDefault:"1"`
+	CassandraDisablePeerDiscovery bool          `env:"CASSANDRA_DISABLE_PEER_DISCOVERY"`
 
 	JWTSecret      string        `env:"JWT_SECRET,required"`
 	JWTIssuer      string        `env:"JWT_ISSUER"       envDefault:"wiki-stream-go"`
