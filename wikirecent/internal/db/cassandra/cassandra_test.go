@@ -1,7 +1,7 @@
 //go:build integration
 
 //	 Run with:
-//		docker compose up -d cassandra
+//		docker compose up -d cassandra1
 //		go test -tags=integration ./internal/db/cassandra/...
 
 package cassandra_test
@@ -23,7 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// defaultHost is where docker-compose.yaml publishes the node.
+// defaultHost is where docker-compose.yaml publishes cassandra1, the only node it
+// publishes.
 const defaultHost = "127.0.0.1:9042"
 
 // testHosts is where every test connects. TestMain sets it once, before any test
@@ -81,6 +82,13 @@ func itConfig(t *testing.T) cassandra.Config {
 	return cassandra.Config{
 		Hosts:    testHosts,
 		Keyspace: keyspace,
+		// 1, so these tests pass against a single node and do not need the rest of the
+		// cluster up. No DC either: Connect reads the name from the node, which keeps
+		// this working against both a bare node (datacenter1) and compose (dc1).
+		ReplicationFactor: 1,
+		// testHosts is reachable, the compose peers are not: they announce container
+		// IPs. Following them costs 48s of connect timeouts per session.
+		DisablePeerDiscovery: true,
 		// QUORUM for both reads and writes. Every test depends on it: a revoked
 		// token has to be visible to the very next read.
 		Consistency: gocql.Quorum,

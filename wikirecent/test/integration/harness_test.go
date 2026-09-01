@@ -291,10 +291,13 @@ func cassandraConfig(keyspace string) cassandra.Config {
 
 func cassandraConfigAt(host, keyspace string) cassandra.Config {
 	return cassandra.Config{
-		Hosts:       []string{host},
-		Keyspace:    keyspace,
-		Consistency: gocql.Quorum,
-		Timeout:     cqlTimeout,
+		Hosts:    []string{host},
+		Keyspace: keyspace,
+		// One testcontainer node, so 1. At 3 the keyspace would still be created and
+		// then every QUORUM query would fail, needing two replicas of three.
+		ReplicationFactor: 1,
+		Consistency:       gocql.Quorum,
+		Timeout:           cqlTimeout,
 	}
 }
 

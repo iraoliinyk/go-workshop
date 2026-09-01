@@ -34,6 +34,16 @@ type Consumer struct {
 	CassandraKeyspace    string        `env:"CASSANDRA_KEYSPACE"    envDefault:"wikistream"`
 	CassandraConsistency string        `env:"CASSANDRA_CONSISTENCY" envDefault:"QUORUM"`
 	CassandraTimeout     time.Duration `env:"CASSANDRA_TIMEOUT"     envDefault:"5s"`
+	// Not CASSANDRA_DC: the Cassandra image already uses that name for the node's own
+	// datacenter. Empty asks the node, which is what a single datacenter wants.
+	CassandraLocalDC string `env:"CASSANDRA_LOCAL_DC"`
+	// Must not exceed the node count, or QUORUM is unreachable and every read and
+	// write fails.
+	CassandraReplicationFactor int `env:"CASSANDRA_REPLICATION_FACTOR" envDefault:"1"`
+	// Set this when running the binary outside the compose network: only cassandra1
+	// is published, and the peers it gossips advertise container IPs that the host
+	// cannot route.
+	CassandraDisablePeerDiscovery bool `env:"CASSANDRA_DISABLE_PEER_DISCOVERY"`
 
 	JWTSecret      string        `env:"JWT_SECRET,required"`
 	JWTIssuer      string        `env:"JWT_ISSUER"       envDefault:"wiki-stream-go"`

@@ -49,10 +49,13 @@ func main() {
 	stores, err := repository.New(ctx, repository.Config{
 		Backend: cfg.DBBackend,
 		Cassandra: cassandra.Config{
-			Hosts:       cfg.CassandraHosts,
-			Keyspace:    cfg.CassandraKeyspace,
-			Consistency: gocql.ParseConsistency(cfg.CassandraConsistency),
-			Timeout:     cfg.CassandraTimeout,
+			Hosts:                cfg.CassandraHosts,
+			Keyspace:             cfg.CassandraKeyspace,
+			DC:                   cfg.CassandraLocalDC,
+			ReplicationFactor:    cfg.CassandraReplicationFactor,
+			DisablePeerDiscovery: cfg.CassandraDisablePeerDiscovery,
+			Consistency:          gocql.ParseConsistency(cfg.CassandraConsistency),
+			Timeout:              cfg.CassandraTimeout,
 		},
 	})
 	if err != nil {
