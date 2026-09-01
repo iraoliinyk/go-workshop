@@ -27,9 +27,9 @@ const insertStatsSnapshot = `INSERT INTO stats_snapshot
 const insertServerSnapshot = `INSERT INTO server_snapshot
 	(server_url, day, snapshot_ts, hits) VALUES (?, ?, ?, ?)`
 
-const insertDelta = `INSERT INTO stats_delta
-	(day, partition, end_offset, total_messages, bot_edits, human_edits)
-	VALUES (?, ?, ?, ?, ?, ?)`
+const insertPoll = `INSERT INTO stats_poll
+	(day, partition, start_offset, end_offset, total_messages, bot_edits, human_edits)
+	VALUES (?, ?, ?, ?, ?, ?, ?)`
 
 func (s *StatsStore) SaveSnapshot(ctx context.Context, at time.Time, snap statsmodels.Snapshot) error {
 	at = at.UTC()
@@ -52,12 +52,8 @@ func (s *StatsStore) SaveSnapshot(ctx context.Context, at time.Time, snap statsm
 }
 
 func (s *StatsStore) Totals(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) {
-	// todo-ch-8: single-partition is not the same as small. SUM reads every row in the
-	// day partition, and stats_delta gets one row per poll per Kafka partition, so a busy
-	// day is millions of rows in this one read. The fix is a running-total row per day,
-	// not a bigger timeout. Failing here only costs a start from zero, so it can wait.
 	const q = `SELECT SUM(total_messages), SUM(bot_edits), SUM(human_edits)
-		FROM stats_delta WHERE day = ?`
+		FROM stats_poll WHERE day = ?`
 
 	d := day.UTC()
 	dayKey := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
@@ -82,10 +78,10 @@ func (s *StatsStore) AddDeltas(ctx context.Context, deltas []statsmodels.Delta) 
 		return nil
 	}
 	// Unlogged, and every row shares the day partition key, so this is one round trip
-	// to one node — the only shape where a Cassandra batch is a saving, not a trap.
+	// to one node.
 	b := s.sess.Batch(gocql.UnloggedBatch)
 	for _, d := range deltas {
-		b.Query(insertDelta, d.Key.Day, d.Key.Partition, d.Key.EndOffset,
+		b.Query(insertPoll, d.Key.Day, d.Key.Partition, d.Key.StartOffset, d.EndOffset,
 			d.Messages, d.BotEdits, d.HumanEdits)
 	}
 	if err := b.ExecContext(ctx); err != nil {

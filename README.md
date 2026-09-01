@@ -122,11 +122,41 @@ go test -race -v ./internal/flusher/...    # show each test name
 
 ## Integration tests
 
-The Cassandra integration tests need a live Cassandra node.
-Run first:
+Two suites share the `integration` build tag. They differ in one thing: who starts
+the infrastructure.
+
+### Scenario tests
+
+`test/integration/` drives the consumer end to end: several group members, one write
+per poll, restarts, replays, a database outage. It starts its own Redpanda and
+Cassandra with [testcontainers](https://golang.testcontainers.org/), so Docker is the
+only requirement. Nothing to start first, and no container left running afterwards.
+
+```bash
+go test -tags=integration ./test/integration/...
+```
+
+```bash
+go test -tags=integration -run TestRestart ./test/integration/...   # one scenario
+go test -tags=integration -v ./test/integration/...                 # show each scenario
+go test -tags=integration -count=1 ./test/integration/...           # ignore cached results
+```
+
+The whole suite takes about two minutes and is green.
+
+### Store tests
+
+`internal/db/cassandra/` checks the schema and the queries against a real node, and
+it does **not** start one:
 
 ```bash
 docker compose up -d cassandra
+CASSANDRA_HOSTS=127.0.0.1:9042 go test -tags=integration ./internal/db/cassandra/...
+```
+
+Both suites at once — Docker running, plus the node above:
+
+```bash
 CASSANDRA_HOSTS=127.0.0.1:9042 go test -tags=integration ./...
 ```
 

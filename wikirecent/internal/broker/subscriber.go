@@ -3,6 +3,7 @@ package broker
 import (
 	"cmp"
 	"context"
+	"math"
 	"slices"
 	"time"
 	"wikirecent/internal/apperrors"
@@ -61,15 +62,14 @@ func NewSubscriber(cfg SubscriberConfig, log applog.Logger, stats Recorder,
 // NewSubscriberWithClient builds a Subscriber on a poller the caller already has.
 // NewSubscriber is the normal path; this is the seam that lets a caller supply its
 // own client, which is how the tests reach the poll loop without a live broker.
-func NewSubscriberWithClient(client RecordPoller, log applog.Logger, stats Recorder, dec Decoder,
-	writer DeltaWriter, obs BatchObserver, cfg SubscriberConfig) *Subscriber {
+func NewSubscriberWithClient(client RecordPoller, log applog.Logger, stats Recorder,
+	dec Decoder, writer DeltaWriter, obs BatchObserver, cfg SubscriberConfig) *Subscriber {
 	if cfg.DrainGrace <= 0 {
 		cfg.DrainGrace = defaultDrainGrace
 	}
 	return &Subscriber{client: client, log: log, stats: stats, dec: dec, writer: writer, obs: obs, cfg: cfg}
 }
 
-// Connect checks that the broker answers.
 func (s *Subscriber) Connect(ctx context.Context) error {
 	if err := s.client.Ping(ctx); err != nil {
 		return &apperrors.ConsumeError{Err: err}
@@ -103,30 +103,22 @@ func (s *Subscriber) Run(ctx context.Context) error {
 			continue
 		}
 
-		if !ctxDone(ctx) {
-			s.handlePoll(ctx, records)
-			s.client.AllowRebalance()
-			continue
+		pollCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.DrainGrace)
+		if ctxDone(ctx) {
+			s.log.Debugf("draining %d records on shutdown", len(records))
 		}
-
-		// A poll can return records and a cancelled context at the same time. These
-		// records are already fetched, so returning here would replay a whole poll on
-		// every shutdown. Finish them on a context that is not cancelled — the same
-		// trick flusher.Run uses for its last snapshot — bounded by DrainGrace so a
-		// stuck write cannot hold the process open.
-		drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.DrainGrace)
-		s.log.Debugf("draining %d records on shutdown", len(records))
-		s.handlePoll(drainCtx, records)
+		s.handlePoll(pollCtx, records)
 		cancel()
 
 		s.client.AllowRebalance()
-		return nil
+
+		// The poll above was the drain. Leaving now is safe: nothing is in hand.
+		if ctxDone(ctx) {
+			return nil
+		}
 	}
 }
 
-// handlePoll turns one poll into one durable write, one commit and one in-memory
-// update. The order is the design: durable before acknowledged, acknowledged before
-// visible. A failed write returns without committing, so the poll replays.
 func (s *Subscriber) handlePoll(ctx context.Context, records []*kgo.Record) {
 	deltas := s.aggregate(records) // one Delta per partition
 
@@ -137,7 +129,11 @@ func (s *Subscriber) handlePoll(ctx context.Context, records []*kgo.Record) {
 	}
 
 	if err := s.client.CommitRecords(ctx, records...); err != nil {
-		s.log.AppErrorf(err, "commit failed")
+		// Not acknowledged, so not visible. These records will be delivered again, and
+		// counting them here as well would put the view ahead of the store until the
+		// next restart.
+		s.log.AppErrorf(err, "commit failed, not applying the poll")
+		return
 	}
 
 	// After the commit, so the in-memory view only ever holds committed data.
@@ -158,22 +154,21 @@ func (s *Subscriber) aggregate(records []*kgo.Record) []statsmodels.Delta {
 		agg, ok := byPartition[record.Partition]
 
 		if !ok {
-			// EndOffset starts below the lowest real offset, so the first record of a
-			// partition always wins the comparison below and Day gets set. A zero value
-			// would lose offset 0.
 			agg = &statsmodels.Delta{
-				Key:         statsmodels.DeltaKey{Partition: record.Partition, EndOffset: -1},
+				Key:         statsmodels.DeltaKey{Partition: record.Partition, StartOffset: math.MaxInt64},
+				EndOffset:   -1,
 				ByServerURL: make(map[string]int64),
 			}
 			byPartition[record.Partition] = agg
 		}
 
-		// Before the decode on purpose: a skipped record still gets its offset
-		// committed, so the key must cover it.
-		if record.Offset > agg.Key.EndOffset {
-			agg.Key.EndOffset = record.Offset
+		if record.Offset < agg.Key.StartOffset {
+			agg.Key.StartOffset = record.Offset
 			t := record.Timestamp.UTC()
 			agg.Key.Day = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+		}
+		if record.Offset > agg.EndOffset {
+			agg.EndOffset = record.Offset
 		}
 
 		event, err := s.dec.Decode(record.Value)
@@ -193,8 +188,7 @@ func (s *Subscriber) aggregate(records []*kgo.Record) []statsmodels.Delta {
 			agg.HumanEdits++
 		}
 		// Empty is not a value, it is a missing field. Counting it would add a phantom
-		// distinct user and an empty-string row to the per-server breakdown. Stats.Apply
-		// takes a fold and cannot tell the difference, so the guard has to be here.
+		// distinct user.
 		if event.User != "" {
 			agg.Users = append(agg.Users, event.User)
 		}

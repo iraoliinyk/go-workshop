@@ -1,13 +1,13 @@
 package cassandra
 
 import (
-	"wikirecent/internal/apperrors"
-	"wikirecent/internal/auth"
 	"context"
 	"errors"
 	"fmt"
 	"math"
 	"time"
+	"wikirecent/internal/apperrors"
+	"wikirecent/internal/auth"
 
 	gocql "github.com/apache/cassandra-gocql-driver/v2"
 )

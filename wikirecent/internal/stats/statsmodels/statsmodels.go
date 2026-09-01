@@ -19,20 +19,18 @@ type SnapshotPoint struct {
 	DistinctUsers int64
 }
 
-// DeltaKey is built from the records themselves, so the same records always give the
-// same key. Writing it twice gives the same result as writing it once: the replay
-// overwrites its own row instead of adding a second one.
 type DeltaKey struct {
-	Day       time.Time
-	Partition int32
-	EndOffset int64
+	Day         time.Time
+	Partition   int32
+	StartOffset int64
 }
 
 type Delta struct {
 	Key         DeltaKey
+	EndOffset   int64
 	Messages    int64
 	BotEdits    int64
 	HumanEdits  int64
-	Users       []string // feeds the in-memory set; not summable in the database
+	Users       []string
 	ByServerURL map[string]int64
 }
