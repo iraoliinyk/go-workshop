@@ -9,26 +9,49 @@ import (
 )
 
 const createKeyspace = `CREATE KEYSPACE IF NOT EXISTS %s
-	WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}`
+	WITH replication = {'class': 'NetworkTopologyStrategy', '%s': %d}`
 
 // keyspaceRE is Cassandra's rule for a keyspace name: letters, digits and
 // underscores, up to 48 characters.
 var keyspaceRE = regexp.MustCompile(`^[a-zA-Z0-9_]{1,48}$`)
 
-func bootstrapKeyspace(ctx context.Context, cfg Config) error {
+// Same reason as keyspaceRE: the name is formatted into the CQL string.
+var dcRE = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,48}$`)
+
+// The name comes from the node's snitch.
+const selectLocalDC = `SELECT data_center FROM system.local`
+
+// bootstrapKeyspace returns the datacenter it replicated into, which the caller
+// needs to route later queries to the same place.
+func bootstrapKeyspace(ctx context.Context, cfg Config) (string, error) {
 	if !keyspaceRE.MatchString(cfg.Keyspace) {
-		return fmt.Errorf("cassandra: invalid keyspace name %q (want %s)", cfg.Keyspace, keyspaceRE)
+		return "", fmt.Errorf("cassandra: invalid keyspace name %q (want %s)", cfg.Keyspace, keyspaceRE)
+	}
+	if cfg.ReplicationFactor < 1 {
+		return "", fmt.Errorf("cassandra: replication factor %d must be at least 1", cfg.ReplicationFactor)
 	}
 	// A session with no keyspace, because the keyspace does not exist yet.
 	sess, err := cfg.cluster("").CreateSession()
 	if err != nil {
-		return fmt.Errorf("cassandra: create session: %w", err)
+		return "", fmt.Errorf("cassandra: create session: %w", err)
 	}
 	defer sess.Close()
-	if err := sess.Query(fmt.Sprintf(createKeyspace, cfg.Keyspace)).ExecContext(ctx); err != nil {
-		return fmt.Errorf("cassandra: create keyspace %q: %w", cfg.Keyspace, err)
+
+	dc := cfg.DC
+	if dc == "" {
+		if err := sess.Query(selectLocalDC).Consistency(gocql.One).ScanContext(ctx, &dc); err != nil {
+			return "", fmt.Errorf("cassandra: read local datacenter: %w", err)
+		}
 	}
-	return nil
+	if !dcRE.MatchString(dc) {
+		return "", fmt.Errorf("cassandra: invalid datacenter name %q (want %s)", dc, dcRE)
+	}
+
+	stmt := fmt.Sprintf(createKeyspace, cfg.Keyspace, dc, cfg.ReplicationFactor)
+	if err := sess.Query(stmt).ExecContext(ctx); err != nil {
+		return "", fmt.Errorf("cassandra: create keyspace %q: %w", cfg.Keyspace, err)
+	}
+	return dc, nil
 }
 
 const createStatsSnapshot = `CREATE TABLE IF NOT EXISTS stats_snapshot (
@@ -48,9 +71,15 @@ const createUserAccounts = `CREATE TABLE IF NOT EXISTS user_accounts (
 const createRevokedTokens = `CREATE TABLE IF NOT EXISTS revoked_tokens (
 	jti text PRIMARY KEY, email text, revoked_at timestamp)`
 
+const createStatsPoll = `CREATE TABLE IF NOT EXISTS stats_poll (
+	day date, partition int, start_offset bigint, end_offset bigint,
+	total_messages bigint, bot_edits bigint, human_edits bigint,
+	PRIMARY KEY ((day), partition, start_offset)
+) WITH CLUSTERING ORDER BY (partition ASC, start_offset DESC)`
+
 func bootstrapTables(ctx context.Context, sess *gocql.Session) error {
 	for _, stmt := range []string{
-		createStatsSnapshot, createServerSnapshot, createUserAccounts, createRevokedTokens,
+		createStatsSnapshot, createServerSnapshot, createUserAccounts, createRevokedTokens, createStatsPoll,
 	} {
 		if err := sess.Query(stmt).ExecContext(ctx); err != nil {
 			return fmt.Errorf("cassandra: create table: %w", err)

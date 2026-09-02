@@ -1,7 +1,7 @@
 //go:build integration
 
 //	 Run with:
-//		docker compose up -d cassandra
+//		docker compose up -d cassandra1
 //		go test -tags=integration ./internal/db/cassandra/...
 
 package cassandra_test
@@ -23,7 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// defaultHost is where docker-compose.yaml publishes the node.
+// defaultHost is where docker-compose.yaml publishes cassandra1, the only node it
+// publishes.
 const defaultHost = "127.0.0.1:9042"
 
 // testHosts is where every test connects. TestMain sets it once, before any test
@@ -40,7 +41,7 @@ func TestMain(m *testing.M) {
 	// not there. A closed port usually means compose was not started, so say so.
 	if err := waitForCQL(testHosts[0], 30*time.Second); err != nil {
 		log.Printf("integration: no Cassandra at %s: %v", testHosts[0], err)
-		log.Printf("integration: start one with `docker compose up -d cassandra`, or set CASSANDRA_HOSTS")
+		log.Printf("integration: start one with `docker compose up -d cassandra1`, or set CASSANDRA_HOSTS")
 		os.Exit(1)
 	}
 	log.Printf("integration: using cassandra at %s", strings.Join(testHosts, ","))
@@ -81,9 +82,16 @@ func itConfig(t *testing.T) cassandra.Config {
 	return cassandra.Config{
 		Hosts:    testHosts,
 		Keyspace: keyspace,
-		// QUORUM for both reads and writes. Every test depends on it: a revoked
-		// token has to be visible to the very next read.
-		Consistency: gocql.Quorum,
+		// 1, so these tests pass against a single node and do not need the rest of the
+		// cluster up. No DC either: Connect reads the name from the node, which keeps
+		// this working against both a bare node (datacenter1) and compose (dc1).
+		ReplicationFactor: 1,
+		// testHosts is reachable, the compose peers are not: they announce container
+		// IPs. Following them costs 48s of connect timeouts per session.
+		DisablePeerDiscovery: true,
+		// The level the app runs at, for reads and writes both. Every test depends on
+		// it: a revoked token has to be visible to the very next read.
+		Consistency: gocql.LocalQuorum,
 		// Long, because the first CREATE TABLE on a new node is far slower than
 		// a normal query.
 		Timeout: 15 * time.Second,

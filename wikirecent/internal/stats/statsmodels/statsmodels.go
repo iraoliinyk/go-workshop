@@ -18,3 +18,19 @@ type SnapshotPoint struct {
 	HumanEdits    int64
 	DistinctUsers int64
 }
+
+type DeltaKey struct {
+	Day         time.Time
+	Partition   int32
+	StartOffset int64
+}
+
+type Delta struct {
+	Key         DeltaKey
+	EndOffset   int64
+	Messages    int64
+	BotEdits    int64
+	HumanEdits  int64
+	Users       []string
+	ByServerURL map[string]int64
+}

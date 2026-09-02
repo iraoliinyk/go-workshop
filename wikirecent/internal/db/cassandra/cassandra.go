@@ -10,11 +10,19 @@ import (
 )
 
 type Config struct {
-	Hosts       []string
-	Keyspace    string
-	Consistency gocql.Consistency
-	Timeout     time.Duration
+	Hosts             []string
+	Keyspace          string
+	DC                string
+	ReplicationFactor int
+	// DisablePeerDiscovery keeps the driver on Hosts and stops it from following
+	// gossip to the rest of the cluster. Without it every session spends ConnectTimeout on each
+	// unreachable peer before it gives up.
+	DisablePeerDiscovery bool
+	Consistency          gocql.Consistency
+	Timeout              time.Duration
 }
+
+const defaultReplicationFactor = 1
 
 func Connect(ctx context.Context, cfg Config) (*gocql.Session, error) {
 	if len(cfg.Hosts) == 0 {
@@ -23,12 +31,15 @@ func Connect(ctx context.Context, cfg Config) (*gocql.Session, error) {
 	if cfg.Keyspace == "" {
 		return nil, fmt.Errorf("cassandra: no keyspace configured")
 	}
+	if cfg.ReplicationFactor <= 0 {
+		cfg.ReplicationFactor = defaultReplicationFactor
+	}
 
-	// Two steps, because a pooled session cannot switch keyspaces with USE.
-	// First create the keyspace from a session that has none.
-	if err := bootstrapKeyspace(ctx, cfg); err != nil {
+	dc, err := bootstrapKeyspace(ctx, cfg)
+	if err != nil {
 		return nil, err
 	}
+	cfg.DC = dc
 
 	// Then open the session the app will use and create the tables in it.
 	sess, err := cfg.cluster(cfg.Keyspace).CreateSession()
@@ -42,14 +53,28 @@ func Connect(ctx context.Context, cfg Config) (*gocql.Session, error) {
 	return sess, nil
 }
 
-// cluster builds a ClusterConfig for the given keyspace. Pass "" to get a config
-// with no keyspace, which bootstrap needs to create the keyspace itself.
+// cluster builds a ClusterConfig for the given keyspace.
 func (c Config) cluster(keyspace string) *gocql.ClusterConfig {
 	cl := gocql.NewCluster(c.Hosts...)
 	cl.Keyspace = keyspace
 	cl.Consistency = c.Consistency
 	cl.Timeout = c.Timeout
 	cl.ConnectTimeout = c.Timeout
+	// Token-aware, so a query goes to a node that holds the row instead of paying an
+	// extra hop through a coordinator that has to forward it.
+	fallback := gocql.RoundRobinHostPolicy()
+	if c.DC != "" {
+		// Only once the datacenter is known: with an empty name every host counts as
+		// remote, and the preference would mean nothing.
+		fallback = gocql.DCAwareRoundRobinPolicy(c.DC)
+	}
+	cl.PoolConfig.HostSelectionPolicy = gocql.TokenAwareHostPolicy(fallback)
+	if c.DisablePeerDiscovery {
+		// Both are needed: the lookup flag skips reading system.peers at startup, the
+		// filter drops any peer that a later gossip event still announces.
+		cl.DisableInitialHostLookup = true
+		cl.HostFilter = gocql.WhiteListHostFilter(c.Hosts...)
+	}
 	// Retries are safe because each snapshot writes complete bigint values rather
 	// than counters, so writing the same row twice gives the same result.
 	cl.RetryPolicy = &gocql.SimpleRetryPolicy{NumRetries: 3}

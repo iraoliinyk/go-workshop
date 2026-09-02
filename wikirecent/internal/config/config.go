@@ -30,15 +30,28 @@ type Consumer struct {
 	DBBackend          string        `env:"DB_BACKEND"           envDefault:"in-memory"` // cassandra | in-memory
 	StatsFlushInterval time.Duration `env:"STATS_FLUSH_INTERVAL" envDefault:"10s"`
 
-	CassandraHosts       []string      `env:"CASSANDRA_HOSTS" envSeparator:"," envDefault:"127.0.0.1"`
-	CassandraKeyspace    string        `env:"CASSANDRA_KEYSPACE"    envDefault:"wikistream"`
-	CassandraConsistency string        `env:"CASSANDRA_CONSISTENCY" envDefault:"QUORUM"`
-	CassandraTimeout     time.Duration `env:"CASSANDRA_TIMEOUT"     envDefault:"5s"`
+	CassandraHosts                []string      `env:"CASSANDRA_HOSTS" envSeparator:"," envDefault:"127.0.0.1"`
+	CassandraKeyspace             string        `env:"CASSANDRA_KEYSPACE"    envDefault:"wikistream"`
+	CassandraConsistency          string        `env:"CASSANDRA_CONSISTENCY" envDefault:"LOCAL_QUORUM"`
+	CassandraTimeout              time.Duration `env:"CASSANDRA_TIMEOUT"     envDefault:"5s"`
+	CassandraLocalDC              string        `env:"CASSANDRA_LOCAL_DC"`
+	CassandraReplicationFactor    int           `env:"CASSANDRA_REPLICATION_FACTOR" envDefault:"1"`
+	CassandraDisablePeerDiscovery bool          `env:"CASSANDRA_DISABLE_PEER_DISCOVERY"`
 
 	JWTSecret      string        `env:"JWT_SECRET,required"`
 	JWTIssuer      string        `env:"JWT_ISSUER"       envDefault:"wiki-stream-go"`
 	AccessTokenTTL time.Duration `env:"ACCESS_TOKEN_TTL" envDefault:"1h"`
 	BcryptCost     int           `env:"BCRYPT_COST"      envDefault:"12"`
+
+	MaxPartitions int32 `env:"REDPANDA_PARTITIONS" envDefault:"3"`
+
+	ConsumerWorkers int           `env:"CONSUMER_WORKERS" envDefault:"3"`
+	MaxPollRecords  int           `env:"MAX_POLL_RECORDS" envDefault:"1000"`
+	FetchMinBytes   int32         `env:"FETCH_MIN_BYTES"  envDefault:"10240"` // 10KB
+	FetchMaxWait    time.Duration `env:"FETCH_MAX_WAIT"   envDefault:"100ms"`
+	// Must leave room for STATS_FLUSH shutdown inside cmd/consumer's shutdownTimeout:
+	// the workers drain in parallel, then the last snapshot save follows.
+	ConsumerDrainGrace time.Duration `env:"CONSUMER_DRAIN_GRACE" envDefault:"5s"`
 }
 
 func LoadProducer() (Producer, error) {

@@ -1,10 +1,9 @@
 package stats
 
 import (
-	"wikirecent/internal/events"
-	"wikirecent/internal/stats/statsmodels"
 	"sync"
 	"time"
+	"wikirecent/internal/stats/statsmodels"
 )
 
 type Stats struct {
@@ -25,27 +24,28 @@ func New() *Stats {
 	}
 }
 
-func (s *Stats) Record(event events.WikiEvent) {
+func (s *Stats) Apply(d statsmodels.Delta) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.totalMessages++
-
-	if event.User != "" {
-		s.users[event.User] = struct{}{}
+	s.totalMessages += d.Messages
+	s.botEdits += d.BotEdits
+	s.humanEdits += d.HumanEdits
+	for _, u := range d.Users {
+		s.users[u] = struct{}{}
 	}
-
-	if event.Bot {
-		s.botEdits++
-	} else {
-		s.humanEdits++
+	for url, hits := range d.ByServerURL {
+		s.byServerURL[url] += hits
 	}
-
-	if event.ServerURL != "" {
-		s.byServerURL[event.ServerURL]++
-	}
-
 	s.lastEvent = time.Now()
+}
+
+func (s *Stats) Seed(snap statsmodels.Snapshot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.totalMessages = snap.TotalMessages
+	s.botEdits = snap.BotEdits
+	s.humanEdits = snap.HumanEdits
 }
 
 func (s *Stats) Snapshot() statsmodels.Snapshot {

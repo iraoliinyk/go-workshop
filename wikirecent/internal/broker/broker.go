@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"wikirecent/internal/events"
+	"wikirecent/internal/stats/statsmodels"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -19,13 +20,20 @@ type Adapter interface {
 
 var _ Adapter = (*Publisher)(nil)
 var _ Adapter = (*Subscriber)(nil)
+var _ Adapter = (*Pool)(nil)
 
 type Recorder interface {
-	Record(event events.WikiEvent)
+	Apply(d statsmodels.Delta)
 }
 
 type Decoder interface {
 	Decode(value []byte) (events.WikiEvent, error)
+}
+
+// DeltaWriter persists one poll. Write-only on purpose: the poll loop never reads
+// totals back, so it should not be able to.
+type DeltaWriter interface {
+	AddDeltas(ctx context.Context, deltas []statsmodels.Delta) error
 }
 
 type RecordProducer interface {

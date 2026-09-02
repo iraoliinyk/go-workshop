@@ -2,6 +2,7 @@ package cassandra
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"wikirecent/internal/apperrors"
@@ -26,6 +27,10 @@ const insertStatsSnapshot = `INSERT INTO stats_snapshot
 const insertServerSnapshot = `INSERT INTO server_snapshot
 	(server_url, day, snapshot_ts, hits) VALUES (?, ?, ?, ?)`
 
+const insertPoll = `INSERT INTO stats_poll
+	(day, partition, start_offset, end_offset, total_messages, bot_edits, human_edits)
+	VALUES (?, ?, ?, ?, ?, ?, ?)`
+
 func (s *StatsStore) SaveSnapshot(ctx context.Context, at time.Time, snap statsmodels.Snapshot) error {
 	at = at.UTC()
 	// The partition key is the day at UTC midnight, taken from at.
@@ -46,20 +51,41 @@ func (s *StatsStore) SaveSnapshot(ctx context.Context, at time.Time, snap statsm
 	return nil
 }
 
-// Series reads one day partition and keeps the rows between from and to. This is a
-// single-partition range read, so it needs no ALLOW FILTERING and no index.
-func (s *StatsStore) Series(ctx context.Context, day, from, to time.Time) ([]statsmodels.SnapshotPoint, error) {
-	const q = `SELECT snapshot_ts, total_messages, bot_edits, human_edits, distinct_users
-		FROM stats_snapshot WHERE day = ? AND snapshot_ts >= ? AND snapshot_ts <= ?`
-	iter := s.sess.Query(q, day.UTC(), from.UTC(), to.UTC()).IterContext(ctx)
+func (s *StatsStore) Totals(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) {
+	const q = `SELECT SUM(total_messages), SUM(bot_edits), SUM(human_edits)
+		FROM stats_poll WHERE day = ?`
 
-	var out []statsmodels.SnapshotPoint
-	var p statsmodels.SnapshotPoint
-	for iter.Scan(&p.At, &p.TotalMessages, &p.BotEdits, &p.HumanEdits, &p.DistinctUsers) {
-		out = append(out, p)
+	d := day.UTC()
+	dayKey := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+
+	var snap statsmodels.Snapshot
+	err := s.sess.Query(q, dayKey).
+		ScanContext(ctx, &snap.TotalMessages, &snap.BotEdits, &snap.HumanEdits)
+
+	// A day with nothing written yet is not a failure. The first start of the day
+	// lands here, and zero is the correct answer.
+	if errors.Is(err, gocql.ErrNotFound) {
+		return statsmodels.Snapshot{}, nil
 	}
-	if err := iter.Close(); err != nil {
-		return nil, &apperrors.RepositoryError{Err: err}
+	if err != nil {
+		return statsmodels.Snapshot{}, &apperrors.RepositoryError{Err: err}
 	}
-	return out, nil
+	return snap, nil
+}
+
+func (s *StatsStore) AddDeltas(ctx context.Context, deltas []statsmodels.Delta) error {
+	if len(deltas) == 0 {
+		return nil
+	}
+	// Unlogged, and every row shares the day partition key, so this is one round trip
+	// to one node.
+	b := s.sess.Batch(gocql.UnloggedBatch)
+	for _, d := range deltas {
+		b.Query(insertPoll, d.Key.Day, d.Key.Partition, d.Key.StartOffset, d.EndOffset,
+			d.Messages, d.BotEdits, d.HumanEdits)
+	}
+	if err := b.ExecContext(ctx); err != nil {
+		return &apperrors.RepositoryError{Err: err}
+	}
+	return nil
 }

@@ -1,5 +1,13 @@
+-- Reference only. Nothing loads this file: internal/db/cassandra/bootstrap.go
+-- creates the keyspace and the tables. Change that file first, then mirror it here.
+--
+-- dc1 is what docker-compose.yaml names its nodes. A node with no
+-- cassandra-rackdc.properties calls itself datacenter1 instead.
 CREATE KEYSPACE IF NOT EXISTS wikistream
-WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+WITH replication = {
+    'class': 'NetworkTopologyStrategy',
+    'dc1': 3
+    };
 
 -- Overall stats series: distinct users + bots vs non-bots over time.
 CREATE TABLE IF NOT EXISTS stats_snapshot (
@@ -30,4 +38,15 @@ CREATE TABLE IF NOT EXISTS user_accounts (
 CREATE TABLE IF NOT EXISTS revoked_tokens (
     jti        text PRIMARY KEY,
     email      text,
-    revoked_at timestamp); 
+    revoked_at timestamp);
+
+CREATE TABLE IF NOT EXISTS stats_poll (
+    day            date,
+    partition      int,
+    start_offset   bigint,
+    end_offset     bigint,
+    total_messages bigint,
+    bot_edits      bigint,
+    human_edits    bigint,
+    PRIMARY KEY ((day), partition, start_offset)
+) WITH CLUSTERING ORDER BY (partition ASC, start_offset DESC);

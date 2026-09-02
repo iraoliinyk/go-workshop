@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 	events "wikirecent/internal/events"
+	statsmodels "wikirecent/internal/stats/statsmodels"
 
 	kgo "github.com/twmb/franz-go/pkg/kgo"
 	gomock "go.uber.org/mock/gomock"
@@ -142,38 +143,38 @@ func (m *MockRecorder) EXPECT() *MockRecorderMockRecorder {
 	return m.recorder
 }
 
-// Record mocks base method.
-func (m *MockRecorder) Record(event events.WikiEvent) {
+// Apply mocks base method.
+func (m *MockRecorder) Apply(d statsmodels.Delta) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Record", event)
+	m.ctrl.Call(m, "Apply", d)
 }
 
-// Record indicates an expected call of Record.
-func (mr *MockRecorderMockRecorder) Record(event any) *MockRecorderRecordCall {
+// Apply indicates an expected call of Apply.
+func (mr *MockRecorderMockRecorder) Apply(d any) *MockRecorderApplyCall {
 	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Record", reflect.TypeOf((*MockRecorder)(nil).Record), event)
-	return &MockRecorderRecordCall{Call: call}
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Apply", reflect.TypeOf((*MockRecorder)(nil).Apply), d)
+	return &MockRecorderApplyCall{Call: call}
 }
 
-// MockRecorderRecordCall wrap *gomock.Call
-type MockRecorderRecordCall struct {
+// MockRecorderApplyCall wrap *gomock.Call
+type MockRecorderApplyCall struct {
 	*gomock.Call
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MockRecorderRecordCall) Return() *MockRecorderRecordCall {
+func (c *MockRecorderApplyCall) Return() *MockRecorderApplyCall {
 	c.Call = c.Call.Return()
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MockRecorderRecordCall) Do(f func(events.WikiEvent)) *MockRecorderRecordCall {
+func (c *MockRecorderApplyCall) Do(f func(statsmodels.Delta)) *MockRecorderApplyCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MockRecorderRecordCall) DoAndReturn(f func(events.WikiEvent)) *MockRecorderRecordCall {
+func (c *MockRecorderApplyCall) DoAndReturn(f func(statsmodels.Delta)) *MockRecorderApplyCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
@@ -237,6 +238,68 @@ func (c *MockDecoderDecodeCall) Do(f func([]byte) (events.WikiEvent, error)) *Mo
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
 func (c *MockDecoderDecodeCall) DoAndReturn(f func([]byte) (events.WikiEvent, error)) *MockDecoderDecodeCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// MockDeltaWriter is a mock of DeltaWriter interface.
+type MockDeltaWriter struct {
+	ctrl     *gomock.Controller
+	recorder *MockDeltaWriterMockRecorder
+	isgomock struct{}
+}
+
+// MockDeltaWriterMockRecorder is the mock recorder for MockDeltaWriter.
+type MockDeltaWriterMockRecorder struct {
+	mock *MockDeltaWriter
+}
+
+// NewMockDeltaWriter creates a new mock instance.
+func NewMockDeltaWriter(ctrl *gomock.Controller) *MockDeltaWriter {
+	mock := &MockDeltaWriter{ctrl: ctrl}
+	mock.recorder = &MockDeltaWriterMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockDeltaWriter) EXPECT() *MockDeltaWriterMockRecorder {
+	return m.recorder
+}
+
+// AddDeltas mocks base method.
+func (m *MockDeltaWriter) AddDeltas(ctx context.Context, deltas []statsmodels.Delta) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AddDeltas", ctx, deltas)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AddDeltas indicates an expected call of AddDeltas.
+func (mr *MockDeltaWriterMockRecorder) AddDeltas(ctx, deltas any) *MockDeltaWriterAddDeltasCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddDeltas", reflect.TypeOf((*MockDeltaWriter)(nil).AddDeltas), ctx, deltas)
+	return &MockDeltaWriterAddDeltasCall{Call: call}
+}
+
+// MockDeltaWriterAddDeltasCall wrap *gomock.Call
+type MockDeltaWriterAddDeltasCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockDeltaWriterAddDeltasCall) Return(arg0 error) *MockDeltaWriterAddDeltasCall {
+	c.Call = c.Call.Return(arg0)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockDeltaWriterAddDeltasCall) Do(f func(context.Context, []statsmodels.Delta) error) *MockDeltaWriterAddDeltasCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockDeltaWriterAddDeltasCall) DoAndReturn(f func(context.Context, []statsmodels.Delta) error) *MockDeltaWriterAddDeltasCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

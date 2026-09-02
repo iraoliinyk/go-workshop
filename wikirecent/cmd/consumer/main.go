@@ -49,10 +49,13 @@ func main() {
 	stores, err := repository.New(ctx, repository.Config{
 		Backend: cfg.DBBackend,
 		Cassandra: cassandra.Config{
-			Hosts:       cfg.CassandraHosts,
-			Keyspace:    cfg.CassandraKeyspace,
-			Consistency: gocql.ParseConsistency(cfg.CassandraConsistency),
-			Timeout:     cfg.CassandraTimeout,
+			Hosts:                cfg.CassandraHosts,
+			Keyspace:             cfg.CassandraKeyspace,
+			DC:                   cfg.CassandraLocalDC,
+			ReplicationFactor:    cfg.CassandraReplicationFactor,
+			DisablePeerDiscovery: cfg.CassandraDisablePeerDiscovery,
+			Consistency:          gocql.ParseConsistency(cfg.CassandraConsistency),
+			Timeout:              cfg.CassandraTimeout,
 		},
 	})
 	if err != nil {
@@ -86,13 +89,21 @@ func main() {
 		eventMetrics.Failed,
 	)
 
-	sub, err := broker.NewSubscriber(broker.SubscriberConfig{
-		Brokers: cfg.Brokers,
-		Topic:   cfg.Topic,
-		Group:   cfg.Group,
-	}, logger, liveStats, codec.EventDecoder{}, batchObserver)
+	subscriberConfig := broker.SubscriberConfig{
+		Brokers:        cfg.Brokers,
+		Topic:          cfg.Topic,
+		Group:          cfg.Group,
+		MaxPollRecords: cfg.MaxPollRecords,
+		FetchMinBytes:  cfg.FetchMinBytes,
+		FetchMaxWait:   cfg.FetchMaxWait,
+		DrainGrace:     cfg.ConsumerDrainGrace,
+	}
+
+	totals, err := stores.Stats.Totals(ctx, time.Now().UTC())
 	if err != nil {
-		log.Fatalf("broker: %v", err)
+		logger.AppErrorf(err, "could not restore totals, starting from zero")
+	} else {
+		liveStats.Seed(totals)
 	}
 
 	authSvc, err := auth.New(stores.Users, stores.Tokens, auth.Config{
@@ -108,11 +119,21 @@ func main() {
 
 	api := httpapi.New(liveStats, authSvc, logger, metrics.Handler(reg))
 
+	pool, err := broker.NewPool(broker.PoolConfig{
+		SubscriberConfig: subscriberConfig,
+		Workers:          cfg.ConsumerWorkers,
+		MaxPartitions:    cfg.MaxPartitions,
+	}, logger, liveStats, codec.EventDecoder{}, stores.Stats, batchObserver)
+	if err != nil {
+		log.Fatalf("broker: %v", err)
+	}
+	poolDone := make(chan struct{})
+
 	runner, err := lifecycle.New(lifecycle.Config{
 		Addr:            ":" + strconv.Itoa(cfg.Port),
 		Handler:         api.Router(),
-		Startup:         startup(logger, sub),
-		Shutdown:        shutdown(logger, sub, flushDone),
+		Startup:         startup(logger, pool, poolDone),
+		Shutdown:        shutdown(logger, pool, poolDone, flushDone),
 		ShutdownTimeout: shutdownTimeout,
 		Log:             logger,
 	})
@@ -124,15 +145,26 @@ func main() {
 	runner.Run(ctx)
 }
 
+// waitFor blocks until done is closed, bounded by the runner's shutdown budget so one
+// stuck goroutine cannot hold the process open.
+func waitFor(ctx context.Context, logger applog.Logger, done <-chan struct{}, what string) {
+	select {
+	case <-done:
+	case <-ctx.Done():
+		logger.AppErrorf(ctx.Err(), "gave up waiting for %s", what)
+	}
+}
+
 // startup pings the broker, then runs the poll loop in its own goroutine.
-func startup(logger applog.Logger, sub *broker.Subscriber) lifecycle.Hook {
+func startup(logger applog.Logger, pool *broker.Pool, poolDone chan struct{}) lifecycle.Hook {
 	return func(ctx context.Context) error {
-		if err := sub.Connect(ctx); err != nil {
+		if err := pool.Connect(ctx); err != nil {
 			return err
 		}
 		go func() {
-			if err := sub.Run(ctx); err != nil {
-				logger.AppErrorf(err, "subscription ended")
+			defer close(poolDone)
+			if err := pool.Run(ctx); err != nil {
+				logger.AppErrorf(err, "consumer pool stopped")
 			}
 		}()
 		return nil
@@ -140,20 +172,18 @@ func startup(logger applog.Logger, sub *broker.Subscriber) lifecycle.Hook {
 }
 
 // shutdown unwinds what the runner does not own.
-func shutdown(logger applog.Logger, sub *broker.Subscriber, flushDone <-chan struct{}) lifecycle.Hook {
+func shutdown(logger applog.Logger, pool *broker.Pool,
+	poolDone, flushDone <-chan struct{}) lifecycle.Hook {
 	return func(ctx context.Context) error {
-		if err := sub.Close(ctx); err != nil {
-			logger.AppErrorf(err, "subscriber close failed")
+		// Wait for the workers to leave their poll loops BEFORE taking their clients away.
+		waitFor(ctx, logger, poolDone, "the consumer pool")
+		if err := pool.Close(ctx); err != nil {
+			logger.AppErrorf(err, "pool close failed")
 		}
 
-		// The signal already cancelled the flusher's context, so its final save is
-		// running now. Wait for it, but inside the runner's budget: a hung
-		// SaveSnapshot must not hold the process open past ShutdownTimeout.
-		select {
-		case <-flushDone:
-		case <-ctx.Done():
-			logger.AppErrorf(ctx.Err(), "gave up waiting for the final snapshot")
-		}
+		// Last, because the flusher's final save runs on a fresh context, and main's
+		// deferred stores.Close() would close the session under it.
+		waitFor(ctx, logger, flushDone, "the last snapshot flush")
 		return nil
 	}
 }

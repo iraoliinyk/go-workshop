@@ -7,27 +7,71 @@ x-app: &app
     - .env
   restart: unless-stopped
 
+# Three nodes, because RF is 3 and the app queries at QUORUM. QUORUM of RF 3 is two
+# replicas, so a smaller cluster would create the keyspace and then fail every query.
+x-cassandra: &cassandra
+  image: cassandra:5.0.8
+  environment: &cassandra-env
+    CASSANDRA_CLUSTER_NAME: wikistream
+    # Two, so a restarting node can still find the cluster when cassandra1 is down.
+    # The cost is that a seed never bootstraps: wiping cassandra2's volume alone
+    # would let it rejoin empty and stream nothing, and its share of the rows would
+    # read as missing until `nodetool repair`. Wipe all three, or none.
+    CASSANDRA_SEEDS: cassandra1,cassandra2
+    # Not SimpleSnitch: that one hardcodes datacenter1/rack1 and ignores
+    # cassandra-rackdc.properties, which would silently drop the two settings below
+    # and leave every node in one rack.
+    CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+    CASSANDRA_DC: ${CASSANDRA_DC:-dc1}
+    MAX_HEAP_SIZE: 512M
+    HEAP_NEWSIZE: 100M
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "cqlsh -e 'SELECT bootstrapped FROM system.local' | grep -q COMPLETED"]
+    interval: 15s
+    timeout: 10s
+    retries: 20
+    start_period: 60s
+
 services:
-  cassandra:
-    image: cassandra:5.0.8
-    container_name: cassandra
+  cassandra1:
+    <<: *cassandra
     environment:
-      CASSANDRA_CLUSTER_NAME: wikistream
-      MAX_HEAP_SIZE: 512M
-      HEAP_NEWSIZE: 100M
+      <<: *cassandra-env
+      CASSANDRA_RACK: rack1
+    # The only published node. The other two are reachable on the compose network,
+    # which is where the driver finds them after gossip.
     ports:
       - "${CASSANDRA_HOST_PORT:-9042}:9042"
     volumes:
-      - cassandra-data:/var/lib/cassandra
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "cqlsh -e 'SELECT bootstrapped FROM system.local' | grep -q COMPLETED"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 60s
+      - cassandra1-data:/var/lib/cassandra
 
-  # No container_name on any of the services below. 
+  # Chained on purpose, so the nodes join one at a time: a seed has to answer before
+  # another node looks for it, and Cassandra refuses to bootstrap a node while
+  # another is already joining unless consistent_rangemovement is off.
+  cassandra2:
+    <<: *cassandra
+    environment:
+      <<: *cassandra-env
+      CASSANDRA_RACK: rack2
+    volumes:
+      - cassandra2-data:/var/lib/cassandra
+    depends_on:
+      cassandra1:
+        condition: service_healthy
+
+  cassandra3:
+    <<: *cassandra
+    environment:
+      <<: *cassandra-env
+      CASSANDRA_RACK: rack3
+    volumes:
+      - cassandra3-data:/var/lib/cassandra
+    depends_on:
+      cassandra2:
+        condition: service_healthy
+
+  # No container_name on any of the services above or below.
   # Reach them by service name: `docker compose exec redpanda rpk cluster info`.
   redpanda:
     image: redpandadata/redpanda:v25.1.7
@@ -72,8 +116,6 @@ services:
   redpanda-init:
     image: redpandadata/redpanda:v25.1.7
     entrypoint: ["/bin/sh", "-c"]
-    # -r 1: replication factor is per PARTITION, not per topic, so -p 3 -r 1
-    # -r 3 would be introduced in ch-8
     # retention.ms=86400000 is 24h. The default is 7 days, which is a lot for the workshop.
     #
     # Every line below must keep the same indentation. A `>-` block does NOT fold a
@@ -84,7 +126,7 @@ services:
     command:
       - >-
         rpk topic create ${REDPANDA_TOPIC:-wiki.recentchange.proto}
-        -p 3 -r 1
+        -p ${REDPANDA_PARTITIONS:-3}  -r ${REDPANDA_REPLICAS:-1} 
         --topic-config cleanup.policy=delete
         --topic-config retention.ms=86400000
         --topic-config retention.bytes=536870912
@@ -124,12 +166,20 @@ services:
     command: ["/app/wiki-consumer"]
     environment:
       REDPANDA_BROKERS: "redpanda:9092"
-      CASSANDRA_HOSTS: cassandra
+      # All three, so a contact point remains when one node is down.
+      CASSANDRA_HOSTS: cassandra1,cassandra2,cassandra3
+      CASSANDRA_LOCAL_DC: ${CASSANDRA_DC:-dc1}
+      CASSANDRA_REPLICATION_FACTOR: ${CASSANDRA_REPLICATION_FACTOR:-3}
       DB_BACKEND: ${DB_BACKEND:-cassandra}
     depends_on:
-      cassandra:
-        # Neither binary retries its first connection, so the app must not start
-        # before the node answers queries.
+      # All three: the app creates the keyspace at RF 3 on startup and then queries at
+      # QUORUM, so waiting for one node would let it start against a cluster that
+      # cannot answer. Neither binary retries its first connection.
+      cassandra1:
+        condition: service_healthy
+      cassandra2:
+        condition: service_healthy
+      cassandra3:
         condition: service_healthy
       redpanda-init:
         condition: service_completed_successfully
@@ -179,7 +229,11 @@ services:
     restart: unless-stopped
 
 volumes:
-  cassandra-data:
+  # One per node. Sharing one would give all three the same system tables and token
+  # ranges, and the cluster would never form.
+  cassandra1-data:
+  cassandra2-data:
+  cassandra3-data:
   # to keep it separate from container writable layer
   redpanda-data:
   prometheus-data:
