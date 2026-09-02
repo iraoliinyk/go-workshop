@@ -175,8 +175,7 @@ func startup(logger applog.Logger, pool *broker.Pool, poolDone chan struct{}) li
 func shutdown(logger applog.Logger, pool *broker.Pool,
 	poolDone, flushDone <-chan struct{}) lifecycle.Hook {
 	return func(ctx context.Context) error {
-		// Wait for the workers to leave their poll loops BEFORE taking their clients
-		// away. Closing first pulls the client out from under a running poll.
+		// Wait for the workers to leave their poll loops BEFORE taking their clients away.
 		waitFor(ctx, logger, poolDone, "the consumer pool")
 		if err := pool.Close(ctx); err != nil {
 			logger.AppErrorf(err, "pool close failed")

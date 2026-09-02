@@ -8,9 +8,6 @@ import (
 	gocql "github.com/apache/cassandra-gocql-driver/v2"
 )
 
-// The datacenter is named rather than using the 'replication_factor' shorthand:
-// the shorthand only expands over the datacenters that exist at creation time, so
-// a datacenter added later would get no replicas and nothing would say so.
 const createKeyspace = `CREATE KEYSPACE IF NOT EXISTS %s
 	WITH replication = {'class': 'NetworkTopologyStrategy', '%s': %d}`
 
@@ -18,13 +15,10 @@ const createKeyspace = `CREATE KEYSPACE IF NOT EXISTS %s
 // underscores, up to 48 characters.
 var keyspaceRE = regexp.MustCompile(`^[a-zA-Z0-9_]{1,48}$`)
 
-// Same reason as keyspaceRE: the name is formatted into the CQL string, not bound
-// as a parameter. Hyphens pass because cassandra-rackdc.properties allows them.
+// Same reason as keyspaceRE: the name is formatted into the CQL string.
 var dcRE = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,48}$`)
 
-// The name comes from the node's snitch, so the client cannot derive it:
-// SimpleSnitch answers "datacenter1", GossipingPropertyFileSnitch answers whatever
-// cassandra-rackdc.properties says.
+// The name comes from the node's snitch.
 const selectLocalDC = `SELECT data_center FROM system.local`
 
 // bootstrapKeyspace returns the datacenter it replicated into, which the caller

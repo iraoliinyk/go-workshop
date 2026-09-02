@@ -38,9 +38,6 @@ func (s *StatsStore) SaveSnapshot(_ context.Context, at time.Time, snap statsmod
 
 // Totals mirrors Cassandra sums one day of deltas.
 func (s *StatsStore) Totals(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) {
-	// todo-ch-8: same cost as the Cassandra SUM, for the same reason — this walks every
-	// delta ever stored, not just the day asked for. Harmless while only tests write
-	// here; key the map by day if a test ever spans more than one.
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

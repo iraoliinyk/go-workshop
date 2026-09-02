@@ -35,9 +35,9 @@ func NewPool(cfg PoolConfig, log applog.Logger, stats Recorder,
 		}
 	}
 
-	// Capped, not rejected: fewer workers than partitions is a valid choice, and each
-	// one simply takes more than one partition. A member beyond the partition count is
-	// the broken case — it never gets an assignment and only slows rebalancing down.
+	// Having fewer workers than partitions works fine because each worker
+	// can handle multiple partitions, but extra workers will get no work
+	// and only slow the system down.
 	workers := cfg.Workers
 	if partitions := int(cfg.MaxPartitions); workers > partitions {
 		log.Warnf("broker: capping workers from %d to the %d partitions of topic %q",
@@ -70,8 +70,7 @@ func (p *Pool) Connect(ctx context.Context) error {
 }
 
 // Run starts one supervised goroutine per worker and blocks until every one has
-// returned. The caller runs it in its own goroutine and waits on a done channel —
-// the same shape cmd/consumer already uses for the flusher.
+// returned. The caller runs it in its own goroutine and waits on a done channel.
 func (p *Pool) Run(ctx context.Context) error {
 
 	var wg sync.WaitGroup
@@ -90,13 +89,10 @@ func (p *Pool) Run(ctx context.Context) error {
 const (
 	workerBaseBackoff = time.Second
 	workerMaxBackoff  = time.Minute
-	// A run this long counts as healthy, so the next failure retries fast instead of
-	// inheriting the delay from an outage that is already over.
-	healthyRun = 30 * time.Second
+	healthyRun        = 30 * time.Second
 )
 
-// supervise restarts a worker that stops with an error. Today Subscriber.Run only
-// returns nil, so this is a guard for a future fatal path rather than a live retry.
+// supervise restarts a worker that stops with an error.
 func (p *Pool) supervise(ctx context.Context, id int, s *Subscriber) {
 	backoff := workerBaseBackoff
 

@@ -10,24 +10,18 @@ import (
 )
 
 type Config struct {
-	Hosts    []string
-	Keyspace string
-	// DC pins one datacenter of several. Empty takes the one the contact node
-	// reports, which is what a single datacenter wants.
+	Hosts             []string
+	Keyspace          string
 	DC                string
 	ReplicationFactor int
 	// DisablePeerDiscovery keeps the driver on Hosts and stops it from following
-	// gossip to the rest of the cluster. Needed when the other nodes are announced
-	// on addresses this process cannot route to, which is the case from the host
-	// against docker-compose: only cassandra1 is published, and the peers advertise
-	// container IPs. Without it every session spends ConnectTimeout on each
+	// gossip to the rest of the cluster. Without it every session spends ConnectTimeout on each
 	// unreachable peer before it gives up.
 	DisablePeerDiscovery bool
 	Consistency          gocql.Consistency
 	Timeout              time.Duration
 }
 
-// 1, because that is the only factor a single node can serve at QUORUM.
 const defaultReplicationFactor = 1
 
 func Connect(ctx context.Context, cfg Config) (*gocql.Session, error) {
@@ -41,14 +35,10 @@ func Connect(ctx context.Context, cfg Config) (*gocql.Session, error) {
 		cfg.ReplicationFactor = defaultReplicationFactor
 	}
 
-	// Two steps, because a pooled session cannot switch keyspaces with USE.
-	// First create the keyspace from a session that has none.
 	dc, err := bootstrapKeyspace(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	// Carry the resolved name forward, so the session routes to the datacenter the
-	// replicas actually went into.
 	cfg.DC = dc
 
 	// Then open the session the app will use and create the tables in it.
@@ -63,8 +53,7 @@ func Connect(ctx context.Context, cfg Config) (*gocql.Session, error) {
 	return sess, nil
 }
 
-// cluster builds a ClusterConfig for the given keyspace. Pass "" to get a config
-// with no keyspace, which bootstrap needs to create the keyspace itself.
+// cluster builds a ClusterConfig for the given keyspace.
 func (c Config) cluster(keyspace string) *gocql.ClusterConfig {
 	cl := gocql.NewCluster(c.Hosts...)
 	cl.Keyspace = keyspace

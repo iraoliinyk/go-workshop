@@ -13,11 +13,6 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// defaultDrainGrace keeps a zero-value config working: a drain on an already-expired
-// context would fail its write and replay the poll, which is the thing the drain exists
-// to avoid.
-const defaultDrainGrace = 5 * time.Second
-
 type SubscriberConfig struct {
 	Brokers        []string
 	Topic          string
@@ -25,10 +20,12 @@ type SubscriberConfig struct {
 	FetchMinBytes  int32
 	FetchMaxWait   time.Duration
 	MaxPollRecords int
-	// DrainGrace bounds the work after the shutdown signal: one write and one commit
-	// for the poll already in hand. It must fit inside the runner's shutdown budget.
+	// DrainGrace is a fallback timeout so draining doesn't instantly fail and
+	// trigger the exact retry loop it was created to prevent
 	DrainGrace time.Duration
 }
+
+const defaultDrainGrace = 5 * time.Second
 
 type Subscriber struct {
 	client RecordPoller
