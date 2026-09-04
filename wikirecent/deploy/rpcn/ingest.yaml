@@ -1,45 +1,33 @@
 input:
-  # batching lives on the wrapping broker, not on redpanda itself: the redpanda
-  # input has no batching field of its own (confirmed against
-  # `redpanda-connect create redpanda` — it delivers one message per record
-  # unless something else groups them). This is what makes batch_index() /
-  # batch_size() / .from_all() in the pipeline mapping below mean anything.
+  # The redpanda input sends one record per message, so it is the broker's batching
+  # option below that groups them into the batches batch_index()/batch_size()/from_all() rely on.
   broker:
     inputs:
-      # Named so the Prometheus metrics it emits (input_received, redpanda_lag, ...)
-      # carry a readable label instead of the default blank one.
+      # Labels give each step a name in the Prometheus metrics, so the dashboard can tell steps of the same type apart.
       - label: redpanda_in
         redpanda:
           seed_brokers: ["${REDPANDA_BROKERS}"]
           topics: ["${REDPANDA_TOPIC}"]
           consumer_group: "${REDPANDA_GROUP}"
-    # Mirrors MAX_POLL_RECORDS / FETCH_MIN_BYTES / FETCH_MAX_WAIT
     batching:
       count: ${MAX_POLL_RECORDS:-1000}
       period: 100ms
 
 pipeline:
   processors:
-    # Counts every record pulled from the topic, decoded or not.
     - metric:
         type: counter
         name: wikistream_events_consumed_from_redpanda_total
 
     - try:
-        # Named so the connector dashboard can address this step's processor_error /
-        # processor_latency_ns by label instead of the auto-generated path.
         - label: proto_decode
           protobuf:
             operator: to_json
             import_paths: ["/protos"]
             message: wikirecent.v1.WikiEvent
-            # Without this, to_json emits camelCase keys (serverUrl, titleUrl, ...).
-            # The fold mapping below reads this.server_url: a silent camelCase
-            # mismatch there makes the field always null, which throws inside
-            # fold() — and one erroring line reverts every root.X assignment
-            # made earlier in the same mapping, not just that one field.
+            # use_proto_names must stay true, or keys turn into camelCase and this.server_url
+            # below silently reads as null, breaking the whole fold mapping.
             use_proto_names: true
-        # Only reached if protobuf decode above succeeded.
         - metric:
             type: counter
             name: wikistream_events_processed_total
@@ -53,16 +41,12 @@ pipeline:
         - mapping: |
             meta dlq = "true"
             meta dlq_error = error()
-            # root is untouched: protobuf decode failed, so root still holds
-            # the original wire bytes. The dead-letter topic stores exactly
-            # what could not be parsed, not a reconstruction of it.
+            # root is left untouched here, so the DLQ topic keeps the exact bytes that failed to decode.
 
 output:
   broker:
     pattern: fan_out
     outputs:
-      # Dead-letter leg: keep only messages tagged above, forward the
-      # original bytes unchanged. 
       - label: dlq_write
         redpanda:
           seed_brokers: ["${REDPANDA_BROKERS}"]
@@ -72,42 +56,30 @@ output:
           - mapping: 'root = if meta("dlq") != "true" { deleted() }'
       - processors:
           - mapping: 'root = if meta("dlq") == "true" { deleted() }'
-          # Folds the whole (now decode-only) batch into one row.
           - mapping: |
               let is_first = batch_index() == 0
 
-              # A CQL `date` column needs a date-shaped value, not a raw epoch
-              # number — ts_format on a plain number treats it as unix seconds
-              # and this layout truncates it to midnight UTC in one step.
+              # ts_format converts the raw unix timestamp into a date string, since the day
+              # column in Cassandra is a date type, not a number.
               root.day            = if $is_first { meta("kafka_timestamp_unix").number().ts_format("2006-01-02", "UTC") }
               root.partition      = if $is_first { meta("kafka_partition") }
-              # .min()/.max() always hand back a float64, even over int64 elements —
-              # gocql's bigint marshaler rejects a float64 outright, so the result
-              # needs casting back to int64, not just its inputs.
+              # min() and max() always return a float64, so the result must be cast back to
+              # int64 or gocql rejects it for the bigint column.
               root.start_offset   = if $is_first { meta("kafka_offset").from_all().map_each(o -> o.int64()).min().int64() }
               root.end_offset     = if $is_first { meta("kafka_offset").from_all().map_each(o -> o.int64()).max().int64() }
               root.messages       = if $is_first { batch_size() }
-              # from_all() re-runs its query from the perspective of every message in
-              # the batch — but only when that query is a lazy reference like json("x").
-              # this.bot is resolved to this message's own value first, so this.bot.from_all()
-              # just broadcasts that one value batch_size() times instead of gathering
-              # every message's own bot. json("bot") stays unresolved until from_all()
-              # walks the batch, which is what makes the gather actually happen.
+              # from_all() gathers every message's value only when the query is still lazy,
+              # like json("bot"); a resolved value such as this.bot would just repeat one
+              # message's value across the batch.
               root.bot_edits      = if $is_first { json("bot").from_all().filter(b -> b == true).length() }
               root.human_edits    = if $is_first { root.messages - root.bot_edits }
-              # u != "" alone lets a canary event through: canary events (Wikimedia's
-              # EventStreams heartbeat, meta populated, everything else absent) have no
-              # "user" key at all, not an empty one, and json(...) reads a missing key as
-              # null — which is != "" too. That null then reaches .fold() below as a map
-              # key, which Bloblang rejects outright, erroring the whole mapping — and
-              # one erroring line here reverts every root.X assignment above it, the same
-              # failure mode the .or([]) comment already warns about for zero real users.
-              # .or([]): .unique() over zero elements (every user in the batch was
-              # empty) returns null, not [], and a null here breaks the
-              # distinct_users insert's args_mapping below (map_each on null).
+              # u != null is required too, because a canary heartbeat event has no user field
+              # at all, and a null reaching fold() as a map key crashes the whole mapping.
+              # .or([]) is needed because unique() on an empty list returns null, which would
+              # break the distinct_users insert's args_mapping below.
               root.users          = if $is_first { json("user").from_all().filter(u -> u != "" && u != null).unique().or([]) }
-              # fold's lambda takes one argument, not a (tally, item) tuple —
-              # item.tally is the accumulator, item.value is the current element.
+              # fold()'s lambda takes one argument: item.tally is the running total, item.value
+              # is the current element.
               root.by_server_url  = if $is_first {
                 json("server_url").from_all().filter(u -> u != "" && u != null).fold({}, item -> item.tally.assign({item.value: item.tally.get(item.value).or(0) + 1}))
               }
@@ -115,14 +87,8 @@ output:
         broker:
           pattern: fan_out
           outputs:
-            # The cassandra output has no keyspace field of its own (confirmed
-            # against `redpanda-connect create cassandra`) — every query must
-            # qualify its table as keyspace.table, the same keyspace
-            # internal/config.go defaults CASSANDRA_KEYSPACE to.
-            #
-            # label: both cassandra outputs would otherwise share the same blank
-            # label in output_sent/output_error/output_latency_ns, making the two
-            # writes indistinguishable on a dashboard.
+            # The cassandra output has no keyspace setting, so every query must qualify its
+            # table as keyspace.table.
             - label: cassandra_stats_poll
               cassandra:
                 addresses: ["${CASSANDRA_HOSTS}"]
@@ -134,11 +100,8 @@ output:
                   root = [this.day, this.partition, this.start_offset, this.end_offset,
                           this.messages, this.bot_edits, this.human_edits]
                 consistency: LOCAL_QUORUM
-            # cassandra does one INSERT per message, using args_mapping's result as
-            # that one row's bind values — it does not accept a nested array as
-            # "many rows from one message". unarchive(json_array) is what turns
-            # the one folded row's `users` array into one message per user, each
-            # still carrying `day` via meta (set before root is overwritten).
+            # cassandra writes one row per message, so unarchive(json_array) splits the folded
+            # users array into one message per user.
             - label: cassandra_distinct_users
               processors:
                 - mapping: |

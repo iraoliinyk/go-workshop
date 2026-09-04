@@ -26,10 +26,6 @@ const editEvent = `{"$schema":"/mediawiki/recentchange/1.0.0",` +
 	`"server_script_path":"/w","wiki":"enwiki","parsedcomment":"fix typo",` +
 	`"notify_url":"https://en.wikipedia.org/w/index.php?diff=112"}`
 
-// encode runs the producer half and hands back the decoded message, which is
-// what a consumer would see. The decode side used to live in this package too;
-// now that ingestion is RPCN's job, unmarshaling here is only this test's own
-// way to inspect what EncodeFromJSON produced.
 func encode(t *testing.T, raw string) *wikiv1.WikiEvent {
 	t.Helper()
 

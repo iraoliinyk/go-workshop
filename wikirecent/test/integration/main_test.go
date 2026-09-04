@@ -27,15 +27,10 @@ import (
 )
 
 const (
-	redpandaImage     = "redpandadata/redpanda:v25.1.7"
-	cassandraImage    = "cassandra:5.0.8"
-	startupBudget     = 5 * time.Minute
-	brokerReadyBudget = time.Minute
-
-	// The aliases and addresses rpcn-connect (and any other sidecar container)
-	// reaches the shared broker and node at, once attached to sharedNetwork.
-	// Distinct from kafkaBroker/cassandraHost below, which are host-mapped ports
-	// for this test binary itself.
+	redpandaImage         = "redpandadata/redpanda:v25.1.7"
+	cassandraImage        = "cassandra:5.0.8"
+	startupBudget         = 5 * time.Minute
+	brokerReadyBudget     = time.Minute
 	redpandaNetworkAlias  = "redpanda"
 	redpandaNetworkAddr   = redpandaNetworkAlias + ":29092"
 	cassandraNetworkAlias = "cassandra"

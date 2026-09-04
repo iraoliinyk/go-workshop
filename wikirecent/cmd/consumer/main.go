@@ -86,9 +86,6 @@ func main() {
 		log.Fatalf("auth: %v", err)
 	}
 
-	// nil: ingestion (and its Prometheus metrics) moved to rpcn-ingest, so nothing
-	// scrapes this binary's /metrics anymore. Router() only registers the route
-	// when this is non-nil.
 	api := httpapi.New(statsReader{stores.Stats}, authSvc, logger, nil)
 
 	runner, err := lifecycle.New(lifecycle.Config{
