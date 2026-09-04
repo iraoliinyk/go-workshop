@@ -1,0 +1,121 @@
+input:
+  # The redpanda input sends one record per message, so it is the broker's batching
+  # option below that groups them into the batches batch_index()/batch_size()/from_all() rely on.
+  broker:
+    inputs:
+      # Labels give each step a name in the Prometheus metrics, so the dashboard can tell steps of the same type apart.
+      - label: redpanda_in
+        redpanda:
+          seed_brokers: ["${REDPANDA_BROKERS}"]
+          topics: ["${REDPANDA_TOPIC}"]
+          consumer_group: "${REDPANDA_GROUP}"
+    batching:
+      count: ${MAX_POLL_RECORDS:-1000}
+      period: 100ms
+
+pipeline:
+  processors:
+    - metric:
+        type: counter
+        name: wikistream_events_consumed_from_redpanda_total
+
+    - try:
+        - label: proto_decode
+          protobuf:
+            operator: to_json
+            import_paths: ["/protos"]
+            message: wikirecent.v1.WikiEvent
+            # use_proto_names must stay true, or keys turn into camelCase and this.server_url
+            # below silently reads as null, breaking the whole fold mapping.
+            use_proto_names: true
+        - metric:
+            type: counter
+            name: wikistream_events_processed_total
+
+    - catch:
+        - metric:
+            type: counter
+            name: wikistream_events_failed_total
+            labels:
+              application: consumer
+        - mapping: |
+            meta dlq = "true"
+            meta dlq_error = error()
+            # root is left untouched here, so the DLQ topic keeps the exact bytes that failed to decode.
+
+output:
+  broker:
+    pattern: fan_out
+    outputs:
+      - label: dlq_write
+        redpanda:
+          seed_brokers: ["${REDPANDA_BROKERS}"]
+          topic: "${REDPANDA_DLQ_TOPIC}"
+          key: '${! meta("kafka_key") }'
+        processors:
+          - mapping: 'root = if meta("dlq") != "true" { deleted() }'
+      - processors:
+          - mapping: 'root = if meta("dlq") == "true" { deleted() }'
+          - mapping: |
+              let is_first = batch_index() == 0
+
+              # ts_format converts the raw unix timestamp into a date string, since the day
+              # column in Cassandra is a date type, not a number.
+              root.day            = if $is_first { meta("kafka_timestamp_unix").number().ts_format("2006-01-02", "UTC") }
+              root.partition      = if $is_first { meta("kafka_partition") }
+              # min() and max() always return a float64, so the result must be cast back to
+              # int64 or gocql rejects it for the bigint column.
+              root.start_offset   = if $is_first { meta("kafka_offset").from_all().map_each(o -> o.int64()).min().int64() }
+              root.end_offset     = if $is_first { meta("kafka_offset").from_all().map_each(o -> o.int64()).max().int64() }
+              root.messages       = if $is_first { batch_size() }
+              # from_all() gathers every message's value only when the query is still lazy,
+              # like json("bot"); a resolved value such as this.bot would just repeat one
+              # message's value across the batch.
+              root.bot_edits      = if $is_first { json("bot").from_all().filter(b -> b == true).length() }
+              root.human_edits    = if $is_first { root.messages - root.bot_edits }
+              # u != null is required too, because a canary heartbeat event has no user field
+              # at all, and a null reaching fold() as a map key crashes the whole mapping.
+              # .or([]) is needed because unique() on an empty list returns null, which would
+              # break the distinct_users insert's args_mapping below.
+              root.users          = if $is_first { json("user").from_all().filter(u -> u != "" && u != null).unique().or([]) }
+              # fold()'s lambda takes one argument: item.tally is the running total, item.value
+              # is the current element.
+              root.by_server_url  = if $is_first {
+                json("server_url").from_all().filter(u -> u != "" && u != null).fold({}, item -> item.tally.assign({item.value: item.tally.get(item.value).or(0) + 1}))
+              }
+              root = if ! $is_first { deleted() }
+        broker:
+          pattern: fan_out
+          outputs:
+            # The cassandra output has no keyspace setting, so every query must qualify its
+            # table as keyspace.table.
+            - label: cassandra_stats_poll
+              cassandra:
+                addresses: ["${CASSANDRA_HOSTS}"]
+                query: >
+                  INSERT INTO ${CASSANDRA_KEYSPACE}.stats_poll
+                  (day, partition, start_offset, end_offset, total_messages, bot_edits, human_edits)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)
+                args_mapping: |
+                  root = [this.day, this.partition, this.start_offset, this.end_offset,
+                          this.messages, this.bot_edits, this.human_edits]
+                consistency: LOCAL_QUORUM
+            # cassandra writes one row per message, so unarchive(json_array) splits the folded
+            # users array into one message per user.
+            - label: cassandra_distinct_users
+              processors:
+                - mapping: |
+                    meta day = this.day
+                    root = this.users
+                - unarchive:
+                    format: json_array
+              cassandra:
+                addresses: ["${CASSANDRA_HOSTS}"]
+                query: 'INSERT INTO ${CASSANDRA_KEYSPACE}.distinct_users (day, user) VALUES (?, ?)'
+                args_mapping: 'root = [meta("day"), this]'
+                consistency: LOCAL_QUORUM
+
+metrics:
+  prometheus:
+    add_process_metrics: true
+    add_go_metrics: true

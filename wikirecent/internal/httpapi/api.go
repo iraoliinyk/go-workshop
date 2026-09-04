@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -17,7 +18,7 @@ import (
 //go:generate go tool mockgen -source=api.go -destination=mock_api_test.go -package=httpapi_test -typed
 
 type snapshotter interface {
-	Snapshot() statsmodels.Snapshot
+	Snapshot(ctx context.Context) (statsmodels.Snapshot, error)
 }
 
 // API holds the dependencies shared by all HTTP handlers.
@@ -71,7 +72,12 @@ func (a *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleStats(w http.ResponseWriter, r *http.Request) {
-	a.writeJSONLog(w, r, http.StatusOK, a.stats.Snapshot())
+	snap, err := a.stats.Snapshot(r.Context())
+	if err != nil {
+		a.writeError(w, r, err)
+		return
+	}
+	a.writeJSONLog(w, r, http.StatusOK, snap)
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) error {

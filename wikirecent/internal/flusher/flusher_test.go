@@ -89,7 +89,7 @@ func (s *fakeSink) snapshotCalls() []call {
 // fakeStats is a Snapshotter that always returns the same data.
 type fakeStats struct{ snap statsmodels.Snapshot }
 
-func (f fakeStats) Snapshot() statsmodels.Snapshot { return f.snap }
+func (f fakeStats) Snapshot(context.Context) (statsmodels.Snapshot, error) { return f.snap, nil }
 
 // runFlusher starts f.Run in its own goroutine. It returns a function that
 // cancels the context and waits for Run to finish, so every test can stop the

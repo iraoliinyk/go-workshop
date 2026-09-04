@@ -133,7 +133,7 @@ func TestStats_ReturnsSnapshot(t *testing.T) {
 	}
 
 	api, svc, stats := newTestAPI(t)
-	stats.EXPECT().Snapshot().Return(want).Times(1)
+	stats.EXPECT().Snapshot(gomock.Any()).Return(want, nil).Times(1)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/stats", nil)
@@ -322,7 +322,7 @@ func TestRequestID_AppearsInProdErrorLine(t *testing.T) {
 
 	// A panic inside the handler, so Recoverer runs. /stats is protected, so the
 	// request needs a token first.
-	stats.EXPECT().Snapshot().DoAndReturn(func() statsmodels.Snapshot {
+	stats.EXPECT().Snapshot(gomock.Any()).DoAndReturn(func(context.Context) (statsmodels.Snapshot, error) {
 		panic("boom from the stats mock")
 	})
 

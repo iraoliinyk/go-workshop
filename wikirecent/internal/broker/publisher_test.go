@@ -14,6 +14,8 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+const validEvent = "wiki-event-payload"
+
 func TestPublisher_ConnectPingsTheBroker(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	client := NewMockRecordProducer(ctrl)

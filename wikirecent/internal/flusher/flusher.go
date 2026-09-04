@@ -11,7 +11,7 @@ import (
 
 // Snapshotter reads the current statistics from memory.
 type Snapshotter interface {
-	Snapshot() statsmodels.Snapshot
+	Snapshot(ctx context.Context) (statsmodels.Snapshot, error)
 }
 
 // Sink stores snapshots. It has only the write method, because the flusher never
@@ -71,10 +71,6 @@ func New(s Snapshotter, sink Sink, cfg Config) (*Flusher, error) {
 	}, nil
 }
 
-// Run saves a snapshot on every tick until ctx is cancelled, so the caller should
-// start it in its own goroutine. A failed save is only logged, but the error of the
-// last save is returned, because that one closes the series.
-// Redpanda Connect candidate for ch-10.
 func (f *Flusher) Run(ctx context.Context) error {
 	tick, stop := f.newTicker(f.cfg.Interval)
 	defer stop()
@@ -82,19 +78,24 @@ func (f *Flusher) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			// A new context, because the cancelled one would be refused at once and
-			// the last snapshot would be lost.
 			fctx, cancel := context.WithTimeout(context.Background(), f.cfg.ShutdownGrace)
 			defer cancel()
-			if err := f.sink.SaveSnapshot(fctx, f.now(), f.stats.Snapshot()); err != nil {
+			snap, err := f.stats.Snapshot(fctx)
+			if err != nil {
+				return fmt.Errorf("flusher: shutdown read: %w", err)
+			}
+			if err := f.sink.SaveSnapshot(fctx, f.now(), snap); err != nil {
 				return fmt.Errorf("flusher: shutdown flush: %w", err)
 			}
 			return nil
+
 		case t := <-tick:
-			if err := f.sink.SaveSnapshot(ctx, t.UTC(), f.stats.Snapshot()); err != nil {
-				// SaveSnapshot returns *apperrors.RepositoryError; passing err
-				// itself lets logf attach the code. logf is the only sink here,
-				// so a test can still silence it.
+			snap, err := f.stats.Snapshot(ctx)
+			if err != nil {
+				f.logf(err, "stats read failed: %v", err)
+				continue
+			}
+			if err := f.sink.SaveSnapshot(ctx, t.UTC(), snap); err != nil {
 				f.logf(err, "stats flush: %v", err)
 			}
 		}

@@ -23,7 +23,6 @@ func NewProtoSink(next Sink, log applog.Logger) *ProtoSink {
 func (s *ProtoSink) Publish(ctx context.Context, payload []byte) error {
 	out, err := EncodeFromJSON(payload)
 	if err != nil {
-		// ch-10 RPC DLQ candidate
 		s.log.AppErrorf(err, "skipping unparsable event: %v", err)
 		return nil
 	}

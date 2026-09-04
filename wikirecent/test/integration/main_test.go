@@ -19,6 +19,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tccassandra "github.com/testcontainers/testcontainers-go/modules/cassandra"
 	tcredpanda "github.com/testcontainers/testcontainers-go/modules/redpanda"
+	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -26,21 +27,30 @@ import (
 )
 
 const (
-	redpandaImage     = "redpandadata/redpanda:v25.1.7"
-	cassandraImage    = "cassandra:5.0.8"
-	startupBudget     = 5 * time.Minute
-	brokerReadyBudget = time.Minute
+	redpandaImage         = "redpandadata/redpanda:v25.1.7"
+	cassandraImage        = "cassandra:5.0.8"
+	startupBudget         = 5 * time.Minute
+	brokerReadyBudget     = time.Minute
+	redpandaNetworkAlias  = "redpanda"
+	redpandaNetworkAddr   = redpandaNetworkAlias + ":29092"
+	cassandraNetworkAlias = "cassandra"
 )
 
 var (
 	kafkaBroker   string // host:port of the Redpanda Kafka API
 	cassandraHost string // host:port of the CQL port
 
-	sharedAdmin *kadm.Client
+	sharedAdmin   *kadm.Client
+	sharedNetwork *testcontainers.DockerNetwork // lets sidecar containers, e.g. rpcn-connect, reach the two above
 )
 
 func runRedpanda(ctx context.Context) (*tcredpanda.Container, error) {
-	return tcredpanda.Run(ctx, redpandaImage)
+	return tcredpanda.Run(ctx, redpandaImage,
+		network.WithNetwork([]string{redpandaNetworkAlias}, sharedNetwork),
+		// Only the compose file's own address is registered by default, so a
+		// sidecar container on sharedNetwork needs its own advertised listener.
+		tcredpanda.WithListener(redpandaNetworkAddr),
+	)
 }
 
 func waitForBroker(ctx context.Context, client *kgo.Client) error {
@@ -60,8 +70,11 @@ func waitForBroker(ctx context.Context, client *kgo.Client) error {
 	}
 }
 
-func runCassandra(ctx context.Context) (*tccassandra.CassandraContainer, error) {
-	return tccassandra.Run(ctx, cassandraImage,
+// runCassandra starts a Cassandra node. newCassandraNode calls this directly for a
+// throwaway per-test node; run below adds sharedNetwork so sidecar containers, e.g.
+// rpcn-connect, can also reach the one shared node it starts.
+func runCassandra(ctx context.Context, extra ...testcontainers.ContainerCustomizer) (*tccassandra.CassandraContainer, error) {
+	opts := append([]testcontainers.ContainerCustomizer{
 		testcontainers.WithEnv(map[string]string{
 			"CASSANDRA_CLUSTER_NAME": "wikistream_it",
 			"MAX_HEAP_SIZE":          "512M",
@@ -69,7 +82,8 @@ func runCassandra(ctx context.Context) (*tccassandra.CassandraContainer, error) 
 		}),
 		testcontainers.WithAdditionalWaitStrategyAndDeadline(startupBudget,
 			wait.ForListeningPort("9042/tcp")),
-	)
+	}, extra...)
+	return tccassandra.Run(ctx, cassandraImage, opts...)
 }
 
 func TestMain(m *testing.M) {
@@ -94,7 +108,20 @@ func run(m *testing.M) int {
 		if err := testcontainers.TerminateContainer(cassandraNode); err != nil {
 			log.Printf("integration: failed to terminate cassandra: %s", err)
 		}
+		// After both containers, since a network with any container still attached
+		// to it cannot be removed.
+		if sharedNetwork != nil {
+			if err := sharedNetwork.Remove(ctx); err != nil {
+				log.Printf("integration: failed to remove shared network: %s", err)
+			}
+		}
 	}()
+
+	var err error
+	if sharedNetwork, err = network.New(ctx); err != nil {
+		log.Printf("integration: could not create the shared network: %s", err)
+		return 1
+	}
 
 	startup, startupCtx := errgroup.WithContext(ctx)
 	startup.Go(func() error {
@@ -107,7 +134,7 @@ func run(m *testing.M) int {
 	})
 	startup.Go(func() error {
 		var err error
-		if cassandraNode, err = runCassandra(startupCtx); err != nil {
+		if cassandraNode, err = runCassandra(startupCtx, network.WithNetwork([]string{cassandraNetworkAlias}, sharedNetwork)); err != nil {
 			return err
 		}
 		cassandraHost, err = cassandraNode.ConnectionHost(startupCtx)

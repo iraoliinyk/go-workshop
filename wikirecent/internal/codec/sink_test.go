@@ -7,10 +7,12 @@ import (
 
 	"wikirecent/internal/applog"
 	"wikirecent/internal/codec"
+	wikiv1 "wikirecent/internal/genproto/wikirecent/v1"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestProtoSink_PublishesProtobufNotJSON(t *testing.T) {
@@ -30,8 +32,8 @@ func TestProtoSink_PublishesProtobufNotJSON(t *testing.T) {
 	require.NotEmpty(t, forwarded)
 	assert.NotEqual(t, editEvent, string(forwarded), "the JSON must not be forwarded as-is")
 
-	event, err := codec.Decode(forwarded)
-	require.NoError(t, err)
+	var event wikiv1.WikiEvent
+	require.NoError(t, proto.Unmarshal(forwarded, &event))
 	assert.Equal(t, "iryna", event.GetUser())
 }
 

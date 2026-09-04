@@ -10,6 +10,7 @@
 package httpapi_test
 
 import (
+	context "context"
 	reflect "reflect"
 	statsmodels "wikirecent/internal/stats/statsmodels"
 
@@ -41,17 +42,18 @@ func (m *Mocksnapshotter) EXPECT() *MocksnapshotterMockRecorder {
 }
 
 // Snapshot mocks base method.
-func (m *Mocksnapshotter) Snapshot() statsmodels.Snapshot {
+func (m *Mocksnapshotter) Snapshot(ctx context.Context) (statsmodels.Snapshot, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Snapshot")
+	ret := m.ctrl.Call(m, "Snapshot", ctx)
 	ret0, _ := ret[0].(statsmodels.Snapshot)
-	return ret0
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // Snapshot indicates an expected call of Snapshot.
-func (mr *MocksnapshotterMockRecorder) Snapshot() *MocksnapshotterSnapshotCall {
+func (mr *MocksnapshotterMockRecorder) Snapshot(ctx any) *MocksnapshotterSnapshotCall {
 	mr.mock.ctrl.T.Helper()
-	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Snapshot", reflect.TypeOf((*Mocksnapshotter)(nil).Snapshot))
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Snapshot", reflect.TypeOf((*Mocksnapshotter)(nil).Snapshot), ctx)
 	return &MocksnapshotterSnapshotCall{Call: call}
 }
 
@@ -61,19 +63,19 @@ type MocksnapshotterSnapshotCall struct {
 }
 
 // Return rewrite *gomock.Call.Return
-func (c *MocksnapshotterSnapshotCall) Return(arg0 statsmodels.Snapshot) *MocksnapshotterSnapshotCall {
-	c.Call = c.Call.Return(arg0)
+func (c *MocksnapshotterSnapshotCall) Return(arg0 statsmodels.Snapshot, arg1 error) *MocksnapshotterSnapshotCall {
+	c.Call = c.Call.Return(arg0, arg1)
 	return c
 }
 
 // Do rewrite *gomock.Call.Do
-func (c *MocksnapshotterSnapshotCall) Do(f func() statsmodels.Snapshot) *MocksnapshotterSnapshotCall {
+func (c *MocksnapshotterSnapshotCall) Do(f func(context.Context) (statsmodels.Snapshot, error)) *MocksnapshotterSnapshotCall {
 	c.Call = c.Call.Do(f)
 	return c
 }
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
-func (c *MocksnapshotterSnapshotCall) DoAndReturn(f func() statsmodels.Snapshot) *MocksnapshotterSnapshotCall {
+func (c *MocksnapshotterSnapshotCall) DoAndReturn(f func(context.Context) (statsmodels.Snapshot, error)) *MocksnapshotterSnapshotCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }
