@@ -31,6 +31,9 @@ const insertPoll = `INSERT INTO stats_poll
 	(day, partition, start_offset, end_offset, total_messages, bot_edits, human_edits)
 	VALUES (?, ?, ?, ?, ?, ?, ?)`
 
+const selectLatestSnapshot = `SELECT total_messages, bot_edits, human_edits, distinct_users
+    FROM stats_snapshot WHERE day = ? LIMIT 1`
+
 func (s *StatsStore) SaveSnapshot(ctx context.Context, at time.Time, snap statsmodels.Snapshot) error {
 	at = at.UTC()
 	// The partition key is the day at UTC midnight, taken from at.
@@ -51,15 +54,17 @@ func (s *StatsStore) SaveSnapshot(ctx context.Context, at time.Time, snap statsm
 	return nil
 }
 
-func (s *StatsStore) Totals(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) {
-	const q = `SELECT SUM(total_messages), SUM(bot_edits), SUM(human_edits)
-		FROM stats_poll WHERE day = ?`
+const selectPollTotals = `SELECT SUM(total_messages), SUM(bot_edits), SUM(human_edits)
+	FROM stats_poll WHERE day = ?`
 
+const selectDistinctUserCount = `SELECT COUNT(*) FROM distinct_users WHERE day = ?`
+
+func (s *StatsStore) Totals(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) {
 	d := day.UTC()
 	dayKey := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
 
 	var snap statsmodels.Snapshot
-	err := s.sess.Query(q, dayKey).
+	err := s.sess.Query(selectPollTotals, dayKey).
 		ScanContext(ctx, &snap.TotalMessages, &snap.BotEdits, &snap.HumanEdits)
 
 	// A day with nothing written yet is not a failure. The first start of the day
@@ -68,6 +73,11 @@ func (s *StatsStore) Totals(ctx context.Context, day time.Time) (statsmodels.Sna
 		return statsmodels.Snapshot{}, nil
 	}
 	if err != nil {
+		return statsmodels.Snapshot{}, &apperrors.RepositoryError{Err: err}
+	}
+
+	if err := s.sess.Query(selectDistinctUserCount, dayKey).
+		ScanContext(ctx, &snap.DistinctUsers); err != nil {
 		return statsmodels.Snapshot{}, &apperrors.RepositoryError{Err: err}
 	}
 	return snap, nil
@@ -88,4 +98,24 @@ func (s *StatsStore) AddDeltas(ctx context.Context, deltas []statsmodels.Delta) 
 		return &apperrors.RepositoryError{Err: err}
 	}
 	return nil
+}
+
+func (s *StatsStore) Snapshot(ctx context.Context) (statsmodels.Snapshot, error) {
+	return s.Totals(ctx, time.Now().UTC())
+}
+
+func (s *StatsStore) LatestSnapshot(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) {
+	d := day.UTC()
+	dayKey := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
+
+	var snap statsmodels.Snapshot
+	err := s.sess.Query(selectLatestSnapshot, dayKey).
+		ScanContext(ctx, &snap.TotalMessages, &snap.BotEdits, &snap.HumanEdits, &snap.DistinctUsers)
+	if errors.Is(err, gocql.ErrNotFound) {
+		return statsmodels.Snapshot{}, nil
+	}
+	if err != nil {
+		return statsmodels.Snapshot{}, &apperrors.RepositoryError{Err: err}
+	}
+	return snap, nil
 }

@@ -9,6 +9,6 @@ scrape_configs:
       - targets: ["producer:7002"]
         labels:
           application: producer
-      - targets: ["consumer:7001"]
+      - targets: ["rpcn-ingest:4195"]
         labels:
           application: consumer

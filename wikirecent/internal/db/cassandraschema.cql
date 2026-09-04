@@ -50,3 +50,5 @@ CREATE TABLE IF NOT EXISTS stats_poll (
     human_edits    bigint,
     PRIMARY KEY ((day), partition, start_offset)
 ) WITH CLUSTERING ORDER BY (partition ASC, start_offset DESC);
+
+CREATE TABLE IF NOT EXISTS distinct_users (day  date, user text, PRIMARY KEY ((day), user));

@@ -67,3 +67,20 @@ func (s *StatsStore) AddDeltas(ctx context.Context, deltas []statsmodels.Delta) 
 	}
 	return nil
 }
+
+func (s *StatsStore) Snapshot(ctx context.Context) (statsmodels.Snapshot, error) {
+	return s.Totals(ctx, time.Now().UTC())
+}
+
+func (s *StatsStore) LatestSnapshot(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.points) == 0 {
+		return statsmodels.Snapshot{}, nil
+	}
+	p := s.points[len(s.points)-1]
+	return statsmodels.Snapshot{
+		TotalMessages: p.TotalMessages, BotEdits: p.BotEdits,
+		HumanEdits: p.HumanEdits, DistinctUsers: p.DistinctUsers,
+	}, nil
+}

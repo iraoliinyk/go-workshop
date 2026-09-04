@@ -110,22 +110,12 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Run-once container that creates the topic before either service starts.
-  # Explicit creation, not auto-create: the topic settings should be visible here
-  # rather than inherited from cluster defaults that may change.
   redpanda-init:
     image: redpandadata/redpanda:v25.1.7
     entrypoint: ["/bin/sh", "-c"]
-    # retention.ms=86400000 is 24h. The default is 7 days, which is a lot for the workshop.
-    #
-    # Every line below must keep the same indentation. A `>-` block does NOT fold a
-    # more-indented line, so one extra space splits this into several shell commands.
-    #
-    # The describe fallback is what makes a re-run idempotent: create exits 1 on
-    # TOPIC_ALREADY_EXISTS. Plain `|| true` would also hide a broken command.
     command:
       - >-
-        rpk topic create ${REDPANDA_TOPIC:-wiki.recentchange.proto}
+        (rpk topic create ${REDPANDA_TOPIC:-wiki.recentchange.proto}
         -p ${REDPANDA_PARTITIONS:-3}  -r ${REDPANDA_REPLICAS:-1} 
         --topic-config cleanup.policy=delete
         --topic-config retention.ms=86400000
@@ -134,12 +124,47 @@ services:
         --topic-config message.timestamp.type=CreateTime
         --brokers redpanda:9092
         || rpk topic describe ${REDPANDA_TOPIC:-wiki.recentchange.proto}
+        --brokers redpanda:9092)
+        &&
+        (rpk topic create ${REDPANDA_DLQ_TOPIC:-wiki.recentchange.dlq}
+        -p ${REDPANDA_DLQ_PARTITIONS:-1}  -r ${REDPANDA_REPLICAS:-1} 
+        --topic-config cleanup.policy=delete
+        --topic-config retention.ms=172800000
+        --topic-config retention.bytes=536870912
+        --topic-config compression.type=producer
+        --topic-config message.timestamp.type=CreateTime
         --brokers redpanda:9092
-
+        || rpk topic describe ${REDPANDA_DLQ_TOPIC:-wiki.recentchange.dlq}
+        --brokers redpanda:9092)
     depends_on:
       redpanda:
         condition: service_healthy
     restart: "no"
+
+  rpcn-ingest:
+    image: docker.redpanda.com/redpandadata/connect:4.45.1   # pin an exact tag before use
+    command: ["run", "/etc/rpcn/ingest.yaml"]
+    environment:
+      REDPANDA_BROKERS: "redpanda:9092"
+      REDPANDA_TOPIC: ${REDPANDA_TOPIC:-wiki.recentchange.proto}
+      REDPANDA_DLQ_TOPIC: ${REDPANDA_DLQ_TOPIC:-wiki.recentchange.dlq}
+      REDPANDA_GROUP: ${REDPANDA_GROUP:-wiki-stats}
+      MAX_POLL_RECORDS: ${MAX_POLL_RECORDS:-1000}
+      CASSANDRA_HOSTS: cassandra1,cassandra2,cassandra3
+      CASSANDRA_KEYSPACE: ${CASSANDRA_KEYSPACE:-wikistream}
+    volumes:
+      - ./deploy/rpcn/ingest.yaml:/etc/rpcn/ingest.yaml:ro
+      - ./proto:/protos:ro
+    depends_on:
+      cassandra1:
+        condition: service_healthy
+      cassandra2:
+        condition: service_healthy
+      cassandra3:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
   producer:
     <<: *app

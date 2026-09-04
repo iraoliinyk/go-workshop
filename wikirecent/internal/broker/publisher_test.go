@@ -14,6 +14,10 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// validEvent is opaque payload bytes for Publish, which never decodes what it
+// forwards — no real protobuf-encoded event is needed here.
+const validEvent = "wiki-event-payload"
+
 func TestPublisher_ConnectPingsTheBroker(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	client := NewMockRecordProducer(ctrl)

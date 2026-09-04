@@ -2,15 +2,10 @@ package broker
 
 import (
 	"context"
-	"wikirecent/internal/events"
-	"wikirecent/internal/stats/statsmodels"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// The interfaces below are exported so the mocks can live in package broker_test and
-// every test stays black-box. NewPublisherWithClient and NewSubscriberWithClient are
-// the seams that take them.
 //go:generate go tool mockgen -source=broker.go -destination=mock_broker_test.go -package=broker_test -typed
 
 type Adapter interface {
@@ -19,22 +14,6 @@ type Adapter interface {
 }
 
 var _ Adapter = (*Publisher)(nil)
-var _ Adapter = (*Subscriber)(nil)
-var _ Adapter = (*Pool)(nil)
-
-type Recorder interface {
-	Apply(d statsmodels.Delta)
-}
-
-type Decoder interface {
-	Decode(value []byte) (events.WikiEvent, error)
-}
-
-// DeltaWriter persists one poll. Write-only on purpose: the poll loop never reads
-// totals back, so it should not be able to.
-type DeltaWriter interface {
-	AddDeltas(ctx context.Context, deltas []statsmodels.Delta) error
-}
 
 type RecordProducer interface {
 	Produce(ctx context.Context, r *kgo.Record, promise func(*kgo.Record, error))
@@ -42,22 +21,7 @@ type RecordProducer interface {
 	Flush(ctx context.Context) error
 	Close()
 }
-
-type RecordPoller interface {
-	PollRecords(ctx context.Context, maxRecords int) kgo.Fetches
-	CommitRecords(ctx context.Context, rs ...*kgo.Record) error
-	Ping(ctx context.Context) error
-	AllowRebalance()
-	CloseAllowingRebalance()
-}
-
 type PublishObserver interface {
 	Published()
 	PublishFailed()
-}
-
-type BatchObserver interface {
-	Consumed(n int)
-	Processed()
-	Failed()
 }

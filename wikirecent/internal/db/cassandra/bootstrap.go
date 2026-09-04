@@ -77,9 +77,13 @@ const createStatsPoll = `CREATE TABLE IF NOT EXISTS stats_poll (
 	PRIMARY KEY ((day), partition, start_offset)
 ) WITH CLUSTERING ORDER BY (partition ASC, start_offset DESC)`
 
+const createDistinctUsers = `CREATE TABLE IF NOT EXISTS distinct_users (
+    day  date, user text, PRIMARY KEY ((day), user));`
+
 func bootstrapTables(ctx context.Context, sess *gocql.Session) error {
 	for _, stmt := range []string{
-		createStatsSnapshot, createServerSnapshot, createUserAccounts, createRevokedTokens, createStatsPoll,
+		createStatsSnapshot, createServerSnapshot, createUserAccounts,
+		createRevokedTokens, createStatsPoll, createDistinctUsers,
 	} {
 		if err := sess.Query(stmt).ExecContext(ctx); err != nil {
 			return fmt.Errorf("cassandra: create table: %w", err)

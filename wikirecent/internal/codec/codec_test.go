@@ -7,11 +7,11 @@ import (
 
 	"wikirecent/internal/apperrors"
 	"wikirecent/internal/codec"
-	"wikirecent/internal/events"
 	wikiv1 "wikirecent/internal/genproto/wikirecent/v1"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -36,7 +36,9 @@ const (
 )
 
 // encode runs the producer half and hands back the decoded message, which is
-// what a consumer would see.
+// what a consumer would see. The decode side used to live in this package too;
+// now that ingestion is RPCN's job, unmarshaling here is only this test's own
+// way to inspect what EncodeFromJSON produced.
 func encode(t *testing.T, raw string) *wikiv1.WikiEvent {
 	t.Helper()
 
@@ -44,9 +46,9 @@ func encode(t *testing.T, raw string) *wikiv1.WikiEvent {
 	require.NoError(t, err)
 	require.NotEmpty(t, out)
 
-	event, err := codec.Decode(out)
-	require.NoError(t, err)
-	return event
+	var event wikiv1.WikiEvent
+	require.NoError(t, proto.Unmarshal(out, &event))
+	return &event
 }
 
 func TestEncodeFromJSON_MapsEveryField(t *testing.T) {
@@ -126,48 +128,4 @@ func TestEncodeFromJSON_ShortensTheReportedLine(t *testing.T) {
 	perr, ok := errors.AsType[*apperrors.ParseError](err)
 	require.True(t, ok)
 	assert.Less(t, len(perr.Line), 300, "one bad event must not fill the log")
-}
-
-func TestDecode_RejectsGarbage(t *testing.T) {
-	_, err := codec.Decode([]byte{0xff, 0xff, 0xff, 0xff})
-
-	require.Error(t, err)
-	perr, ok := errors.AsType[*apperrors.ParseError](err)
-	require.True(t, ok)
-	assert.Contains(t, perr.Line, "bytes, prefix", "binary must not be dumped into the log")
-}
-
-func TestToDomain_KeepsOnlyWhatStatsReads(t *testing.T) {
-	got := codec.ToDomain(encode(t, editEvent))
-
-	assert.Equal(t, events.WikiEvent{
-		User:      "iryna",
-		Bot:       false,
-		ServerURL: "https://en.wikipedia.org",
-	}, got)
-}
-
-func TestToDomain_HandlesNilMessage(t *testing.T) {
-	assert.Equal(t, events.WikiEvent{}, codec.ToDomain(nil))
-}
-
-func TestEventDecoder_DecodesRecordValue(t *testing.T) {
-	value, err := codec.EncodeFromJSON([]byte(logEvent))
-	require.NoError(t, err)
-
-	got, err := codec.EventDecoder{}.Decode(value)
-
-	require.NoError(t, err)
-	assert.Equal(t, events.WikiEvent{
-		User:      "Bot9",
-		Bot:       true,
-		ServerURL: "https://commons.wikimedia.org",
-	}, got)
-}
-
-func TestEventDecoder_ReportsBrokenRecord(t *testing.T) {
-	got, err := codec.EventDecoder{}.Decode([]byte{0xff, 0xff})
-
-	require.Error(t, err)
-	assert.Equal(t, events.WikiEvent{}, got, "a failed decode returns no half-filled event")
 }

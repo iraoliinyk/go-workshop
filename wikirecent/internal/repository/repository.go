@@ -14,8 +14,9 @@ import (
 
 type StatsStore interface {
 	AddDeltas(ctx context.Context, deltas []statsmodels.Delta) error
-	Totals(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) // startup restore
-
+	Totals(ctx context.Context, day time.Time) (statsmodels.Snapshot, error)         // startup restore
+	Snapshot(ctx context.Context) (statsmodels.Snapshot, error)                      // flusher's read of "now"
+	LatestSnapshot(ctx context.Context, day time.Time) (statsmodels.Snapshot, error) // GET /stats' read
 	// SaveSnapshot adds one point to the time series. Called by the flush
 	// ticker and once more on shutdown.
 	SaveSnapshot(ctx context.Context, at time.Time, snap statsmodels.Snapshot) error

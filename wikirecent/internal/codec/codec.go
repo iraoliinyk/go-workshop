@@ -2,11 +2,9 @@ package codec
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 	"wikirecent/internal/apperrors"
-	"wikirecent/internal/events"
 	wikiv1 "wikirecent/internal/genproto/wikirecent/v1"
 
 	"google.golang.org/protobuf/proto"
@@ -24,33 +22,6 @@ func EncodeFromJSON(raw []byte) ([]byte, error) {
 		return nil, &apperrors.ParseError{Line: clip(string(raw)), Err: err}
 	}
 	return out, nil
-}
-
-func Decode(value []byte) (*wikiv1.WikiEvent, error) {
-	var event wikiv1.WikiEvent
-	if err := proto.Unmarshal(value, &event); err != nil {
-		line := fmt.Sprintf("%d bytes, prefix %x", len(value), value[:min(16, len(value))])
-		return nil, &apperrors.ParseError{Line: line, Err: err}
-	}
-	return &event, nil
-}
-
-func ToDomain(e *wikiv1.WikiEvent) events.WikiEvent {
-	return events.WikiEvent{
-		User:      e.GetUser(),
-		Bot:       e.GetBot(),
-		ServerURL: e.GetServerUrl(),
-	}
-}
-
-type EventDecoder struct{}
-
-func (EventDecoder) Decode(value []byte) (events.WikiEvent, error) {
-	event, err := Decode(value)
-	if err != nil {
-		return events.WikiEvent{}, err
-	}
-	return ToDomain(event), nil
 }
 
 func toProto(w *wireEvent) *wikiv1.WikiEvent {
