@@ -95,14 +95,21 @@ output:
               # walks the batch, which is what makes the gather actually happen.
               root.bot_edits      = if $is_first { json("bot").from_all().filter(b -> b == true).length() }
               root.human_edits    = if $is_first { root.messages - root.bot_edits }
+              # u != "" alone lets a canary event through: canary events (Wikimedia's
+              # EventStreams heartbeat, meta populated, everything else absent) have no
+              # "user" key at all, not an empty one, and json(...) reads a missing key as
+              # null — which is != "" too. That null then reaches .fold() below as a map
+              # key, which Bloblang rejects outright, erroring the whole mapping — and
+              # one erroring line here reverts every root.X assignment above it, the same
+              # failure mode the .or([]) comment already warns about for zero real users.
               # .or([]): .unique() over zero elements (every user in the batch was
               # empty) returns null, not [], and a null here breaks the
               # distinct_users insert's args_mapping below (map_each on null).
-              root.users          = if $is_first { json("user").from_all().filter(u -> u != "").unique().or([]) }
+              root.users          = if $is_first { json("user").from_all().filter(u -> u != "" && u != null).unique().or([]) }
               # fold's lambda takes one argument, not a (tally, item) tuple —
               # item.tally is the accumulator, item.value is the current element.
               root.by_server_url  = if $is_first {
-                json("server_url").from_all().filter(u -> u != "").fold({}, item -> item.tally.assign({item.value: item.tally.get(item.value).or(0) + 1}))
+                json("server_url").from_all().filter(u -> u != "" && u != null).fold({}, item -> item.tally.assign({item.value: item.tally.get(item.value).or(0) + 1}))
               }
               root = if ! $is_first { deleted() }
         broker:

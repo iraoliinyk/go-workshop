@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"wikirecent/internal/codec"
 	"wikirecent/internal/repository"
 
 	"github.com/stretchr/testify/assert"
@@ -131,4 +132,63 @@ func TestRPCN_IngestsValidRecordsAndRoutesBadOnesToDLQ(t *testing.T) {
 	dlqRecord := consumeOne(t, dlqTopic, 30*time.Second)
 	assert.Equal(t, badPayload, dlqRecord.Value,
 		"the dlq leg must forward the original bytes untouched, not a reconstruction")
+}
+
+func TestRPCN_ACanaryEventInTheBatchDoesNotStallIt(t *testing.T) {
+	topic := newTopic(t, 1)
+	dlqTopic := newTopic(t, 1)
+	keyspace := uniqueName("ks")
+
+	stores, err := repository.New(context.Background(), repository.Config{
+		Backend:   "cassandra",
+		Cassandra: cassandraConfigAt(cassandraHost, keyspace),
+	})
+	require.NoError(t, err, "bootstrap the keyspace rpcn-connect will write into")
+	t.Cleanup(func() { _ = stores.Close() })
+
+	runRPCN(t, topic, dlqTopic, keyspace)
+
+	at := time.Now()
+	canary := []byte(`{"meta":{"domain":"canary","stream":"mediawiki.recentchange","dt":"2026-01-01T00:00:00Z"}}`)
+	canaryWire, err := codec.EncodeFromJSON(canary)
+	require.NoError(t, err)
+
+	edits := editStream(4, at)
+	wantUsers := map[string]bool{}
+	for _, e := range edits {
+		wantUsers[e.user] = true
+	}
+
+	// One publishRaw call, one ProduceSync: the canary and the good edits' wire bytes go to the
+	// broker together, which is what lands them in the same rpcn-connect batch.
+	values := [][]byte{canaryWire}
+	for _, e := range edits {
+		values = append(values, e.wire(t))
+	}
+	publishRaw(t, topic, at, values...)
+
+	// +1: the canary is not a decode failure — it is valid protobuf, just with every field but
+	// meta absent — so it counts toward batch_size()/total_messages like any other record.
+	wantMessages := int64(len(edits)) + 1
+
+	require.Eventually(t, func() bool {
+		s, err := stores.Stats.Totals(context.Background(), at)
+		return err == nil && s.TotalMessages == wantMessages
+	}, 45*time.Second, 500*time.Millisecond,
+		"a canary event in the batch must not block the real edits behind it from reaching stats_poll")
+
+	snap, err := stores.Stats.Totals(context.Background(), at)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(wantUsers)), snap.DistinctUsers,
+		"the canary's absent user must not count as a null distinct user")
+
+	// The strongest confirmation the partition is not stuck: a second, later batch also lands.
+	moreEdits := editStream(3, at)
+	publish(t, topic, moreEdits)
+
+	require.Eventually(t, func() bool {
+		s, err := stores.Stats.Totals(context.Background(), at)
+		return err == nil && s.TotalMessages == wantMessages+int64(len(moreEdits))
+	}, 45*time.Second, 500*time.Millisecond,
+		"the partition must keep advancing after the canary's batch, not stall on it")
 }
